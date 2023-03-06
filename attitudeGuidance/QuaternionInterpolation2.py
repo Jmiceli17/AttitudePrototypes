@@ -43,14 +43,14 @@ q = Quaternion(1,0,0,0)
 dt = 0.1
 tf = 10
 t = 0
-quaternionArray = []
+quaternionArray = []    # This would store the attitude path 
 omegaArray = []
 while t < tf:
-    w = Omega(t)
+    w = Omega(t)        # Time-varying angular velocity, could also make this constant
     # qDot = QDot(w, q)
     # q = q + qDot*dt # This only works for very small steps(?)
     # q = q.normalised
-    q.integrate(w, dt)
+    q.integrate(w, dt)   # Note: see implementation here: https://github.com/KieranWynn/pyquaternion/blob/master/pyquaternion/quaternion.py#L948 
 
     omegaArray.append(w)
     quaternionArray.append(q)
@@ -62,6 +62,43 @@ print("Integrated Angular Velocity: \n{}".format(omegaArray))
 
 
 # Construct Hermite Spline
+# Given sequence of quaternions [q] and rates [w]
+# For qi and qi+1 in [q] and wi and wi+1 in [w]
+#   Calculate Beta
+#   
+# Gievn two quaternions, and two rates, and a time
+# caluclate a quaternion in between these two that obeys the 
+# rates
+def QuaternionHermiteSpline(q, w, t):
+    Beta1 = 1 - (1-t**3)
+    Beta2 = 3*(t**2)-(2*(t**3))
+    Beta3 = t**3
 
+    qa = q[0]
+    qb = q[1]
 
+    w1 = w[0]/3
+    w1_asQuat = Quaternion(vector=w1)
+    w1_exp = Quaternion.exp(w1_asQuat)
 
+    w3 = w[1]/3
+    w3_asQuat = Quaternion(vector=w3)
+    w3_exp = Quaternion.exp(w3_asQuat)
+
+    w2 = Quaternion.log(w1_exp.inverse*qa.inverse*qb*w3_exp)
+
+    w1B1_asQuat = Quaternion(vector=(w1*Beta1))
+    w2B2_asQuat = w2*Beta2
+    w3B3_asQuat = Quaternion(vector=(w3*Beta3))
+
+    q_interpolated = qa*Quaternion.exp(w1B1_asQuat)*Quaternion.exp(w2B2_asQuat)*Quaternion.exp(w3B3_asQuat)
+
+    return q_interpolated
+
+q_ineterp = QuaternionHermiteSpline(quaternionArray, omegaArray, dt)
+
+print("Initial Quaternion should be: \n{}".format(quaternionArray[0]))
+print("Interpolated Quaternion: \n{}".format(q_ineterp))
+
+print("Q[{}] should be: \n{}".format(1, quaternionArray[1]))
+print("Interpolated Quaternion: \n{}".format(q_ineterp))

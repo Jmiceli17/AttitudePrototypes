@@ -10,6 +10,7 @@
 
 import numpy as np
 from pyquaternion import Quaternion
+import random
 
 # define angular velocity as a function of time
 def Omega(t):
@@ -37,14 +38,15 @@ def Omega(t):
 #     print("qDot: {}".format(qDot))
 #     return qDot
 
-# Do a basic numerical integration scheme 
-# X = X + Xdot*dt
+# Define data structures to contain the waypoints of the desired trajectory
+quaternionArray = []    # This would store the attitude path 
+omegaArray = []
+timeArray = []
 q = Quaternion(1,0,0,0)
 dt = 0.1
 tf = 10
 t = 0
-quaternionArray = []    # This would store the attitude path 
-omegaArray = []
+# Make up a trajectory just by integrating the attitude
 while t < tf:
     w = Omega(t)        # Time-varying angular velocity, could also make this constant
     # qDot = QDot(w, q)
@@ -54,34 +56,32 @@ while t < tf:
 
     omegaArray.append(w)
     quaternionArray.append(q)
+    timeArray.append(t)
 
     t = t + dt
 
-print("Integrated Quaternions: \n{}".format(quaternionArray))
-print("Integrated Angular Velocity: \n{}".format(omegaArray))
+# print("Integrated Quaternions: \n{}".format(quaternionArray))
+# print("Integrated Angular Velocity: \n{}".format(omegaArray))
+# print("Times of waypoints: \n{}".format(timeArray))
 
-
-# Construct Hermite Spline
-# Given sequence of quaternions [q] and rates [w]
-# For qi and qi+1 in [q] and wi and wi+1 in [w]
-#   Calculate Beta
-#   
-# Gievn two quaternions, and two rates, and a time
-# caluclate a quaternion in between these two that obeys the 
-# rates
-def QuaternionHermiteSpline(q, w, t):
+def QuaternionHermiteSpline(qa, qb, wa, wb, t):
+    """
+    Hermite Spline interpolation of quaternions
+    
+    Given two quaternions, and two rates, and a time
+    caluclate a quaternion in between these two that obeys the 
+    rates
+    """
     Beta1 = 1 - (1-t**3)
     Beta2 = 3*(t**2)-(2*(t**3))
     Beta3 = t**3
 
-    qa = q[0]
-    qb = q[1]
-
-    w1 = w[0]/3
+    # TODO: need to confirm that the 'w's in this algorithm actually correspond to angular velocity
+    w1 = wa/3
     w1_asQuat = Quaternion(vector=w1)
-    w1_exp = Quaternion.exp(w1_asQuat)
+    w1_exp = Quaternion.exp(w1_asQuat)  # See http://kieranwynn.github.io/pyquaternion/#exp-and-log-maps 
 
-    w3 = w[1]/3
+    w3 = wb/3
     w3_asQuat = Quaternion(vector=w3)
     w3_exp = Quaternion.exp(w3_asQuat)
 
@@ -95,10 +95,48 @@ def QuaternionHermiteSpline(q, w, t):
 
     return q_interpolated
 
-q_ineterp = QuaternionHermiteSpline(quaternionArray, omegaArray, dt)
+
+# Generate a random list of (incrementing) times to query the Hermite spline and generate an attitude command
+evalTimeArray = []
+t = 0
+# Generate time samples from 0 to the last time of the quaternion path
+# TODO: how do we guarantee we actually get to the goal?
+while t < timeArray[-1]:
+    evalTimeArray.append(t)
+
+    # Generate random time step
+    dt = random.uniform(0,1)
+
+    # Increment to the next time
+    t = t + dt
+# print("Evaluation times: \n{}".format(evalTimeArray))
+
+
+interpolatedQuaternionArray = []    # Stores the results of Hermite interpolation
+i = 0                               # The index of the current waypoint
+# Loop through the evaluation times and waypoints and evaluate the Hermite spline
+for time in evalTimeArray:
+    if time >= timeArray[i] and time < timeArray[i+1]:
+        # Evaulate the Hermite spline
+        qa = quaternionArray[i]
+        qb = quaternionArray[i+1]
+        wa = omegaArray[i]
+        wb = omegaArray[i+1]
+    
+        q_interpolated = QuaternionHermiteSpline(qa, qb, wa, wb, time)
+
+        interpolatedQuaternionArray.append(q_interpolated)
+
+        # Increment the current index
+        i = i + 1
+
+    else:
+        # The current time is outside the current window so increment the index but don't evaluate
+        i = i + 1
+    
 
 print("Initial Quaternion should be: \n{}".format(quaternionArray[0]))
-print("Interpolated Quaternion: \n{}".format(q_ineterp))
+print("Interpolated Quaternion: \n{}".format(interpolatedQuaternionArray[0]))
 
-print("Q[{}] should be: \n{}".format(1, quaternionArray[1]))
-print("Interpolated Quaternion: \n{}".format(q_ineterp))
+print("Final Quaternion should be: \n{}".format(quaternionArray[-1]))
+print("Interpolated Quaternion: \n{}".format(interpolatedQuaternionArray[-1]))

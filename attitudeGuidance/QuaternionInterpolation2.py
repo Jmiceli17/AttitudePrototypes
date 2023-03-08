@@ -10,7 +10,9 @@
 
 import numpy as np
 from pyquaternion import Quaternion
+from copy import copy
 import random
+
 
 # define angular velocity as a function of time
 def Omega(t):
@@ -21,7 +23,7 @@ def Omega(t):
 
     theta = np.deg2rad(20)
     w = theta*np.array([w0, w1, w2])    # rad/s
-
+    # print("w: {}".format(w))
     return w
 
 
@@ -47,22 +49,25 @@ dt = 0.1
 tf = 10
 t = 0
 # Make up a trajectory just by integrating the attitude
+# print("q before integration: {}".format(q))
 while t < tf:
     w = Omega(t)        # Time-varying angular velocity, could also make this constant
     # qDot = QDot(w, q)
     # q = q + qDot*dt # This only works for very small steps(?)
     # q = q.normalised
     q.integrate(w, dt)   # Note: see implementation here: https://github.com/KieranWynn/pyquaternion/blob/master/pyquaternion/quaternion.py#L948 
-
+    # print("q: {}".format(q))
     omegaArray.append(w)
-    quaternionArray.append(q)
+    quaternionArray.append(copy(q))
     timeArray.append(t)
 
     t = t + dt
 
+# print("q after integration: {}".format(q))
+
 # print("Integrated Quaternions: \n{}".format(quaternionArray))
 # print("Integrated Angular Velocity: \n{}".format(omegaArray))
-# print("Times of waypoints: \n{}".format(timeArray))
+print("Times of waypoints: \n{}".format(timeArray))
 
 def QuaternionHermiteSpline(qa, qb, wa, wb, t):
     """
@@ -91,6 +96,7 @@ def QuaternionHermiteSpline(qa, qb, wa, wb, t):
     w2B2_asQuat = w2*Beta2
     w3B3_asQuat = Quaternion(vector=(w3*Beta3))
 
+    # TODO: Review paper to ensure use of "scalar first" format
     q_interpolated = qa*Quaternion.exp(w1B1_asQuat)*Quaternion.exp(w2B2_asQuat)*Quaternion.exp(w3B3_asQuat)
 
     return q_interpolated
@@ -109,13 +115,18 @@ while t < timeArray[-1]:
 
     # Increment to the next time
     t = t + dt
-# print("Evaluation times: \n{}".format(evalTimeArray))
+print("Evaluation times: \n{}".format(evalTimeArray))
 
 
 interpolatedQuaternionArray = []    # Stores the results of Hermite interpolation
 i = 0                               # The index of the current waypoint
+j = 0                               # The index of the current evaluation time
 # Loop through the evaluation times and waypoints and evaluate the Hermite spline
-for time in evalTimeArray:
+# for time in evalTimeArray:
+while j < len(evalTimeArray):
+    # print("j: ",j)
+    time = evalTimeArray[j]
+    print("time: {}".format(time))
     if time >= timeArray[i] and time < timeArray[i+1]:
         # Evaulate the Hermite spline
         qa = quaternionArray[i]
@@ -123,14 +134,21 @@ for time in evalTimeArray:
         wa = omegaArray[i]
         wb = omegaArray[i+1]
     
+        print("qa: {}".format(qa))
+        print("qb: {}".format(qb))
+        print("ta: {}".format(timeArray[i]))
+        print("tb: {}".format(timeArray[i+1]))
+
         q_interpolated = QuaternionHermiteSpline(qa, qb, wa, wb, time)
 
-        interpolatedQuaternionArray.append(q_interpolated)
+        print("q_interpolated: {}".format(q_interpolated))
 
-        # Increment the current index
-        i = i + 1
+        interpolatedQuaternionArray.append(q_interpolated)
+        print("incrementing j")
+        j = j + 1
 
     else:
+        print("incrementing i")
         # The current time is outside the current window so increment the index but don't evaluate
         i = i + 1
     
@@ -140,3 +158,30 @@ print("Interpolated Quaternion: \n{}".format(interpolatedQuaternionArray[0]))
 
 print("Final Quaternion should be: \n{}".format(quaternionArray[-1]))
 print("Interpolated Quaternion: \n{}".format(interpolatedQuaternionArray[-1]))
+
+
+class MRP:
+    def __init__(self, x,y,z):
+        self.x=x
+        self.y=y
+        self.z=z
+
+    @classmethod
+    def from_quaternion(cls, q):
+        x = q.x/(1+q.w)
+        y = q.y/(1+q.w)
+        z = q.z/(1+q.w)
+        return cls(x,y,z)
+
+# Convert the planned path of quaternions to MRPs for plotting
+plannedMrpArray = []
+for q in quaternionArray:
+    # print("q: ",q)
+    mrp = MRP.from_quaternion(q)
+    plannedMrpArray.append(mrp)
+
+# Convert the interpolated set of quaternions to MRPs for plottin 
+interpolatedMrpArray = []
+for q in interpolatedQuaternionArray:
+    mrp = MRP.from_quaternion(q)
+    interpolatedMrpArray.append(mrp)

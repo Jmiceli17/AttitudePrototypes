@@ -5,6 +5,8 @@ import constants
 import InitialConditions as IC
 from InertialPositionVelocity import InertialPositionVelocity
 from CalculateDcmHN import CalculateDcmHN
+from ModifiedRodriguesParameters import MRP
+import RigidBodyKinematics as RBK
 
 
 
@@ -219,6 +221,52 @@ def GetGmoPointingReferenceAngularVelocity(t):
     
     return N_omega_RcN
 
+def GetHomework6ReferenceAttitude(t):
+
+    f = 0.05 # [rad/s]
+    sigma_RN = MRP(0.2*np.sin(f*t), 0.3*np.cos(f*t), -0.3*np.sin(f*t))
+
+    dcm_R_N = RBK.MRP2C(sigma_RN.as_array())
+
+    return dcm_R_N
+
+def GetHomework6ReferenceAngularVelocity(t):
+
+    # Approximate [NRc_dot] numerically by applying a small time step and evaluating the change in [NRc]
+    dt = 0.1
+    dcm_R_N_0 = GetHomework6ReferenceAttitude(t - dt)
+    dcm_R_N_1 = GetHomework6ReferenceAttitude(t)
+
+    dcm_N_R_0 = np.transpose(dcm_R_N_0)
+    dcm_N_R_1 = np.transpose(dcm_R_N_1)
+    
+    dcm_N_R_dt = dcm_N_R_1 - dcm_N_R_0
+
+    dcm_N_R_dot = 1/dt * dcm_N_R_dt
+    
+    N_omega_NR_tilde = np.matmul(-dcm_N_R_dot, np.transpose(dcm_N_R_1))
+
+    # We have the angular velocity of N wrt Rc but we need angular velocity of Rc wrt N
+    N_omega_RN_tilde = np.transpose(N_omega_NR_tilde)
+
+    # Extract angular velocity from the tilde matrix
+    w1 = -N_omega_RN_tilde[1,2]
+    w2 = N_omega_RN_tilde[0,2]
+    w3 = -N_omega_RN_tilde[0,1]
+    N_omega_RN = np.array([w1, w2, w3])
+    
+    return N_omega_RN
+
+
+def GetHomework6ReferenceAngularAcceleration(t):
+
+    dt = 0.1
+    N_omega_RN_0 = GetHomework6ReferenceAngularVelocity(t-dt)
+    N_omega_RN_1 = GetHomework6ReferenceAngularVelocity(t)
+
+    N_omega_RN_dot = 1/dt*(N_omega_RN_1 - N_omega_RN_0)
+
+    return N_omega_RN_dot
 
 if __name__ == "__main__":
 

@@ -1,13 +1,16 @@
 import numpy as np
 from enum import Enum
 import math
-
+import RigidBodyKinematics as RBK
 from ReferenceAttitudes import (GetSunPointingReferenceAttitude,
                                 GetSunPointingReferenceAngularVelocity,
                                 GetNadirPointingReferenceAttitude,
                                 GetNadirPointingReferenceAngularVelocity,
                                 GetGmoPointingReferenceAttitude,
-                                GetGmoPointingReferenceAngularVelocity)
+                                GetGmoPointingReferenceAngularVelocity,
+                                GetHomework6ReferenceAttitude,
+                                GetHomework6ReferenceAngularVelocity,
+                                GetHomework6ReferenceAngularAcceleration)
 from AttitudeError import CalculateAttitudeError
 from PDControl import PDControl
 from InertialPositionVelocity import InertialPositionVelocity
@@ -200,3 +203,237 @@ def MissionPointingControl(t, state, gains = (np.eye(3),np.eye(3))):
             u, mode, sigma_BR, B_omega_BR = NadirPointingControl(t, state, gains)
 
     return u, mode, sigma_BR, B_omega_BR
+
+
+def Homework6_CC1_Control(t, state, gains = (np.eye(3),np.eye(3))):
+    """
+    Attitude reference is the inertial frame
+    Angular velocity reference is 0s
+    
+    This function implements a slightly more complicated control law that uses the gyroscopic terms of the reference
+    angular velocity
+    """
+    pointing_mode = Mode.INVALID
+
+    sigma_BN = state[0]
+    B_omega_BN = state[1]
+    K = gains[0]
+    P = gains[1]
+    # print("[Homework6_CC1_Control] \n> Gains: \n> K: {} \n> P: {}".format(gains[0], gains[1]))
+    I = np.array([[100.0, 0, 0],
+                [0, 75.0, 0],
+                [0, 0, 80.0]])
+
+
+    dcm_R_N = np.eye(3) # Desired frame is identity
+    N_omega_RN = np.zeros(3)    
+
+    # Use the current attitude to determine the attitude and ang vel tracking error
+    sigma_BR, B_omega_BR = CalculateAttitudeError(sigma_BN, B_omega_BN, dcm_R_N, N_omega_RN)
+
+    # print("[Homework6_CC1_Control] \n> sigma_BR: {}".format(sigma_BR))
+
+    # Convert ang vel reference to body frame
+    dcm_B_N = RBK.MRP2C(sigma_BN)
+    B_omega_RN = np.matmul(dcm_B_N, N_omega_RN)
+
+    # Calculate tilde matrix of omega_BN
+    B_omega_BN_tilde = RBK.v3Tilde(B_omega_BN)
+    
+
+    # Calculate control torques
+    u = np.matmul(-K, sigma_BR.as_array()) - np.matmul(P, B_omega_BR) + np.matmul(I, (-np.cross(B_omega_BN, B_omega_RN))) + np.matmul(B_omega_BN_tilde, np.matmul(I, B_omega_BN)) 
+
+    return u, pointing_mode, sigma_BR, B_omega_BR
+     
+
+def Homework6_CC1_AttitudeTrackingControl(t, state, gains = (np.eye(3),np.eye(3))):
+    pointing_mode = Mode.INVALID
+
+    sigma_BN = state[0]
+    B_omega_BN = state[1]
+    K = gains[0]
+    P = gains[1]
+    # print("[Homework6_CC1_Control] \n> Gains: \n> K: {} \n> P: {}".format(gains[0], gains[1]))
+    I = np.array([[100.0, 0, 0],
+                [0, 75.0, 0],
+                [0, 0, 80.0]])
+
+
+    dcm_R_N = GetHomework6ReferenceAttitude(t)
+    N_omega_RN = GetHomework6ReferenceAngularVelocity(t)
+
+    # Use the current attitude to determine the attitude and ang vel tracking error
+    sigma_BR, B_omega_BR = CalculateAttitudeError(sigma_BN, B_omega_BN, dcm_R_N, N_omega_RN)
+
+    # print("[Homework6_CC1_Control] \n> sigma_BR: {}".format(sigma_BR))
+
+    # Convert ang vel reference to body frame
+    dcm_B_N = RBK.MRP2C(sigma_BN)
+    B_omega_RN = np.matmul(dcm_B_N, N_omega_RN)
+
+    # Calculate tilde matrix of omega_BN and omega_RN
+    B_omega_BN_tilde = RBK.v3Tilde(B_omega_BN)
+    B_omega_RN_tilde = RBK.v3Tilde(B_omega_RN)
+    
+
+    # # # Calculate control torques
+    # # # This doesn't seem to work
+    # # u = np.matmul(-K, sigma_BR.as_array()) \
+    # #     - np.matmul(P, B_omega_BR) \
+    # #     - np.matmul(B_omega_RN_tilde, np.matmul(I, B_omega_RN))\
+    # #     - np.matmul(I, (np.cross(B_omega_BN, B_omega_RN))) \
+    # #     + np.matmul(B_omega_BN_tilde, np.matmul(I, B_omega_BN)) 
+
+    # Approximate the reference angular acceleration
+    N_omega_RN_dot = GetHomework6ReferenceAngularAcceleration(t)
+
+    # Convert to body frame components
+    B_omega_RN_dot = np.matmul(dcm_B_N, N_omega_RN_dot)
+
+    # Calculate control torques
+    u = np.matmul(-K, sigma_BR.as_array()) \
+        - np.matmul(P, B_omega_BR) \
+        + np.matmul(I, (B_omega_RN_dot - np.cross(B_omega_BN, B_omega_RN))) \
+        + np.matmul(B_omega_BN_tilde, np.matmul(I, B_omega_BN)) 
+
+    return u, pointing_mode, sigma_BR, B_omega_BR
+
+def Homework6_CC2_AttitudeTrackingControl(t, state, gains = (np.eye(3),np.eye(3))):
+    """
+    No external torque fed forward in the controller
+    """
+    pointing_mode = Mode.INVALID
+
+    sigma_BN = state[0]
+    B_omega_BN = state[1]
+    K = gains[0]
+    P = gains[1]
+
+    # Same principal inertias as CC1
+    I = np.array([[100.0, 0, 0],
+                [0, 75.0, 0],
+                [0, 0, 80.0]])
+
+
+    # Same reference attitudes and angular velocity as CC1
+    dcm_R_N = GetHomework6ReferenceAttitude(t)
+    N_omega_RN = GetHomework6ReferenceAngularVelocity(t)
+
+    # Use the current attitude to determine the attitude and ang vel tracking error
+    sigma_BR, B_omega_BR = CalculateAttitudeError(sigma_BN, B_omega_BN, dcm_R_N, N_omega_RN)
+
+    # Convert ang vel reference to body frame
+    dcm_B_N = RBK.MRP2C(sigma_BN)
+    B_omega_RN = np.matmul(dcm_B_N, N_omega_RN)
+
+    # Calculate tilde matrix of omega_BN and omega_RN
+    B_omega_BN_tilde = RBK.v3Tilde(B_omega_BN)
+    B_omega_RN_tilde = RBK.v3Tilde(B_omega_RN)
+    
+
+    # Calculate control torques
+    u = np.matmul(-K, sigma_BR.as_array()) - np.matmul(P, B_omega_BR)
+
+    return u, pointing_mode, sigma_BR, B_omega_BR    
+
+
+def Homework6_CC2_AttitudeTrackingControl(t, state, gains = (np.eye(3),np.eye(3))):
+    """
+    External torque included in controller
+    """
+
+    pointing_mode = Mode.INVALID
+
+    sigma_BN = state[0]
+    B_omega_BN = state[1]
+    K = gains[0]
+    P = gains[1]
+    # print("[Homework6_CC1_Control] \n> Gains: \n> K: {} \n> P: {}".format(gains[0], gains[1]))
+    I = np.array([[100.0, 0, 0],
+                [0, 75.0, 0],
+                [0, 0, 80.0]])
+
+
+    dcm_R_N = GetHomework6ReferenceAttitude(t)
+    N_omega_RN = GetHomework6ReferenceAngularVelocity(t)
+
+    # Use the current attitude to determine the attitude and ang vel tracking error
+    sigma_BR, B_omega_BR = CalculateAttitudeError(sigma_BN, B_omega_BN, dcm_R_N, N_omega_RN)
+
+    # print("[Homework6_CC1_Control] \n> sigma_BR: {}".format(sigma_BR))
+
+    # Convert ang vel reference to body frame
+    dcm_B_N = RBK.MRP2C(sigma_BN)
+    B_omega_RN = np.matmul(dcm_B_N, N_omega_RN)
+
+    # Calculate tilde matrix of omega_BN and omega_RN
+    B_omega_BN_tilde = RBK.v3Tilde(B_omega_BN)
+    B_omega_RN_tilde = RBK.v3Tilde(B_omega_RN)
+    
+    # Approximate the reference angular acceleration
+    N_omega_RN_dot = GetHomework6ReferenceAngularAcceleration(t)
+
+    # Convert to body frame components
+    B_omega_RN_dot = np.matmul(dcm_B_N, N_omega_RN_dot)
+
+    # External torque (numbers from Homework 6 CC2 Problem 6/7)
+    L = np.array([0.5, -0.3, 0.2])
+
+    # Calculate control torques
+    u = np.matmul(-K, sigma_BR.as_array()) \
+        - np.matmul(P, B_omega_BR) \
+        + np.matmul(I, (B_omega_RN_dot - np.cross(B_omega_BN, B_omega_RN))) \
+        + np.matmul(B_omega_BN_tilde, np.matmul(I, B_omega_BN)) \
+        - L
+
+    return u, pointing_mode, sigma_BR, B_omega_BR
+
+
+def Homework6_CC1_AttitudeTrackingConstrainedControl(t, state, gains = (np.eye(3),np.eye(3))):
+    pointing_mode = Mode.INVALID
+
+    sigma_BN = state[0]
+    B_omega_BN = state[1]
+    K = gains[0]
+    P = gains[1]
+    # print("[Homework6_CC1_Control] \n> Gains: \n> K: {} \n> P: {}".format(gains[0], gains[1]))
+    I = np.array([[100.0, 0, 0],
+                [0, 75.0, 0],
+                [0, 0, 80.0]])
+
+
+    dcm_R_N = GetHomework6ReferenceAttitude(t)
+    N_omega_RN = GetHomework6ReferenceAngularVelocity(t)
+
+    # Use the current attitude to determine the attitude and ang vel tracking error
+    sigma_BR, B_omega_BR = CalculateAttitudeError(sigma_BN, B_omega_BN, dcm_R_N, N_omega_RN)
+
+    # print("[Homework6_CC1_Control] \n> sigma_BR: {}".format(sigma_BR))
+
+    # Convert ang vel reference to body frame
+    dcm_B_N = RBK.MRP2C(sigma_BN)
+    B_omega_RN = np.matmul(dcm_B_N, N_omega_RN)
+
+    # Calculate tilde matrix of omega_BN and omega_RN
+    B_omega_BN_tilde = RBK.v3Tilde(B_omega_BN)
+
+    # Approximate the reference angular acceleration
+    N_omega_RN_dot = GetHomework6ReferenceAngularAcceleration(t)
+
+    # Convert to body frame components
+    B_omega_RN_dot = np.matmul(dcm_B_N, N_omega_RN_dot)
+
+    # Calculate control torques
+    u = np.matmul(-K, sigma_BR.as_array()) \
+        - np.matmul(P, B_omega_BR) \
+        + np.matmul(I, (B_omega_RN_dot - np.cross(B_omega_BN, B_omega_RN))) \
+        + np.matmul(B_omega_BN_tilde, np.matmul(I, B_omega_BN)) 
+
+    for idx in range(len(u)):
+        if np.abs(u[idx]) < 1.0: # max torque [Nm]
+            u[idx] = 1.0
+
+    return u, pointing_mode, sigma_BR, B_omega_BR
+
+

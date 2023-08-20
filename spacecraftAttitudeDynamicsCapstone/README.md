@@ -1,8 +1,8 @@
 # Spacecraft Attitude Dynamics and Control Capstone Project
 Code for the capstone project of ASEN 5010 - Spacecraft Attitude Dynamics and Control at
-CU. The project focuses on developing attitude guidance and control algorithms for a small 
+CU Boulder. The project focused on developing attitude guidance and control algorithms for a small 
 spacecraft orbiting Mars. A detailed description of the project and the mathematical 
-background for each algorithm is provided in `/Documentation`.
+background for each algorithm is provided in [Documentation](https://github.com/Jmiceli17/Prototypes/tree/main/spacecraftAttitudeDynamicsCapstone/Documentation).
 
 # Set Up
 Clone this repository\

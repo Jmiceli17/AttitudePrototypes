@@ -7,6 +7,12 @@ class MRP:
         self.s1 = s1
         self.s2 = s2
         self.s3 = s3
+
+    def __str__(self):
+        """String representation of the MRP"""
+        return (f"[{self.s1}, {self.s2}, {self.s3}]")
+
+
     def norm(self):
         """
         Calculate the magnitude of this MRP
@@ -17,14 +23,16 @@ class MRP:
         Convert to numpy array to make it easier to work with matrices
         """
         return np.array([self.s1, self.s2, self.s3])
-    def from_array(a,self):
+    
+    @classmethod
+    def from_array(cls,a):
         """
         Create from a numpy array
         """
         s1 = a[0]
         s2 = a[1]
         s3 = a[2]
-        return MRP(s1,s2,s3)
+        return cls(s1,s2,s3)
     def convert_to_shadow_set(self):
         """
         Create a new MRP from the shadow set of this MRP

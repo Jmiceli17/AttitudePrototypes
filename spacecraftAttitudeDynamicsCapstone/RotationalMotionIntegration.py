@@ -120,7 +120,8 @@ def RungeKutta(init_state = np.zeros((2,3)),
                 diff_eq = TorqueFreeRotationalEquationsOfMotion,
                 args = (None, ),
                 ctrl = ZeroControl,
-                ctrl_args = (None, None)):
+                ctrl_args = (None, None),
+                inertia = None):
     """
     4th order RK4 integrator 
     Note this integrator does slightly more than just integrate equations of motion, it also
@@ -145,7 +146,11 @@ def RungeKutta(init_state = np.zeros((2,3)),
     t = 0.0
 
     # Initial control torque and tracking errors
-    B_u, mode, sigma_BR, B_omega_BR = ctrl(t, state, ctrl_args)
+    # TODO: make this cleaner
+    if inertia is not None:
+        B_u, mode, sigma_BR, B_omega_BR = ctrl(t, state, ctrl_args, inertia=inertia)
+    else:
+         B_u, mode, sigma_BR, B_omega_BR = ctrl(t, state, ctrl_args)
     
     # convert sigma_BR to array # TODO make MRP class indexible
     sigma_BR = sigma_BR.as_array()
@@ -187,7 +192,11 @@ def RungeKutta(init_state = np.zeros((2,3)),
         t = t + t_step
 
         # Calculate the desired control torque for the next step
-        B_u, mode, sigma_BR, B_omega_BR  = ctrl(t, state, ctrl_args)
+        # TODO: make this cleaner
+        if inertia is not None:
+            B_u, mode, sigma_BR, B_omega_BR = ctrl(t, state, ctrl_args, inertia=inertia)
+        else:
+            B_u, mode, sigma_BR, B_omega_BR = ctrl(t, state, ctrl_args)
         sigma_BR = sigma_BR.as_array()
         
         # Save states and controls

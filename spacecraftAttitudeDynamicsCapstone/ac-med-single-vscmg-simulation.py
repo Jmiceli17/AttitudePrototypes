@@ -1,7 +1,8 @@
 import numpy as np
 import math
 
-from State import StateVscmg
+from State import SpacecraftState, VscmgState
+from Spacecraft import Spacecraft, Vscmg
 from ModifiedRodriguesParameters import MRP
 from EquationsOfMotion import VscmgDynamics # RungeKutta
 
@@ -35,23 +36,31 @@ if __name__ == "__main__":
     gimbal_angle_init = 0.0 # [rad]
     gimbal_rate_init = 0.0 # [rad/s]
 
+    init_state_vscmg = VscmgState(wheel_speed=wheel_speed_init,
+                                  gimbal_angle=gimbal_angle_init,
+                                  gimbal_rate=gimbal_rate_init)
+
+    sim_vscmg = Vscmg(G_J=G_J,
+                      I_Ws=I_Ws,
+                      init_state=init_state_vscmg,
+                      dcm_BG_init=dcm_BG_init,
+                      gimbal_angle_init=gimbal_angle_init)
+
     # Initial attitude states
     sigma_BN_init = MRP(0.1, 0.2, 0.3)
     B_omega_BN_init = np.array([0.01, -0.01, 0.005]) # [rad/s]
 
-    state_init = StateVscmg(sigma_BN=sigma_BN_init,
+    init_state_sc = SpacecraftState(sigma_BN=sigma_BN_init,
                             B_omega_BN=B_omega_BN_init,
-                            wheel_speed=wheel_speed_init,
-                            gimbal_angle=gimbal_angle_init,
-                            gimbal_rate=gimbal_rate_init
+                            vscmg_states=[init_state_vscmg]
                             )
 
+    sim_spacecraft = Spacecraft(B_Is=B_Is,
+                            init_state=init_state_sc,
+                            vscmgs=[sim_vscmg])
+
     # Define equations of motion
-    vscmg_eom = VscmgDynamics(B_Is=B_Is,
-                            G_J=G_J,
-                            I_Ws=I_Ws,
-                            dcm_BG_init=dcm_BG_init,
-                            gimbal_angle_init=gimbal_angle_init)
+    vscmg_eom = VscmgDynamics(spacecraft=sim_spacecraft)
 
     # Define integrator and integration properties
     dt = 0.1 # [s]
@@ -59,18 +68,21 @@ if __name__ == "__main__":
     t_final = 30 # [s]
 
     # Run simulation
-    solution = vscmg_eom.simulate(init_state=state_init,
-                        t_init=t_init,
-                        t_max=t_final,
-                        t_step=dt)
+    solution = vscmg_eom.simulate(t_init=t_init,
+                                t_max=t_final,
+                                t_step=dt)
 
     # Plot results
     # Extract the log data
     sigma_BN_list = solution["MRP"]
     B_omega_BN_list = solution["omega_B_N"]
-    wheel_speed_list = solution["wheel_speed"]
-    gimbal_angle_list = solution["gimbal_angle"]
-    gimbal_rate_list = solution["gimbal_rate"]
+
+    for vidx in range(len(sim_spacecraft.vscmgs)):
+
+        wheel_speed_dict = {vidx: solution[f"wheel_speed_{vidx}"]}
+        gimbal_angle_dict = {vidx: solution[f"gimbal_angle_{vidx}"]}
+        gimbal_rate_dict = {vidx: solution[f"gimbal_rate_{vidx}"]}
+
     t_list = solution["time"]
     energy_list = solution["total_energy"]
     H_list = solution["N_H_total"]
@@ -80,12 +92,13 @@ if __name__ == "__main__":
     for idx in range(len(t_list)):
         sigma_BN = sigma_BN_list[idx]
         B_omega_BN = B_omega_BN_list[idx]
-        wheel_speed = wheel_speed_list[idx]
-        gimbal_angle = gimbal_angle_list[idx]
-        gimbal_rate = gimbal_rate_list[idx]
         t = t_list[idx]
         energy = energy_list[idx]
         H_total = H_list[idx]
+
+        wheel_speed = [wheel_speed_dict[vidx][idx] for vidx in range(len(sim_spacecraft.vscmgs))]
+        gimbal_angle = [gimbal_angle_dict[vidx][idx] for vidx in range(len(sim_spacecraft.vscmgs))]
+        gimbal_rate = [gimbal_rate_dict[vidx][idx] for vidx in range(len(sim_spacecraft.vscmgs))]
 
         if (abs(t-10.0) < 1e-6) or (abs(t-30.0) < 1e-6):
             print(f"> Time: {t}")
@@ -93,8 +106,8 @@ if __name__ == "__main__":
             print(f"  > N_H: {H_total}")
             print(f"  > sigma_BN: {sigma_BN}")
             print(f"  > B_omega_BN: {B_omega_BN}")
-            print(f"  > Omega: {wheel_speed}")
-            print(f"  > gamma: {gimbal_angle}")
+            print(f"  > Omegas: {wheel_speed}")
+            print(f"  > gammas: {gimbal_angle}")
             
     
     Plots.PlotMrpAndOmegaComponents(sigma_BN_list, 

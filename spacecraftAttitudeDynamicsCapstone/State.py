@@ -112,60 +112,82 @@ class SpacecraftState:
         """
         self.vscmg_states.append(vscmg)
 
-    def to_array(self):
+    def to_array(self, format="new"):
         """
         Convert the state to a flat array representation.
-        
+
+        Args:
+            format (str): Format of the output array. 
+                        - "new" (default): [mrp, omega, gimbal_angles, gimbal_rates, wheel_speeds]
+                        - "old": [mrp, omega, [gimbal_angle1, gimbal_rate1, wheel_speed1], ...]
+
         Returns:
-            list: Flattened state representation
+            ndarray: Flattened state representation.
         """
         # Start with attitude and angular velocity
         state_array = np.concatenate((self.sigma_BN.as_array(), self.B_omega_BN))
-        
-        # Ensure VSCMG states are added correctly
+
         if self.vscmg_states:
-            vscmg_arrays = np.concatenate([vscmg.to_array() for vscmg in self.vscmg_states])
+            if format == "new":
+                # Extract gimbal angles, rates, and wheel speeds separately
+                gimbal_angles = np.array([vscmg.gimbal_angle for vscmg in self.vscmg_states])
+                gimbal_rates = np.array([vscmg.gimbal_rate for vscmg in self.vscmg_states])
+                wheel_speeds = np.array([vscmg.wheel_speed for vscmg in self.vscmg_states])
+
+                vscmg_arrays = np.concatenate((gimbal_angles, gimbal_rates, wheel_speeds))
+            elif format == "old":
+                # Flatten using old format where each VSCMG state is a set of three values
+                vscmg_arrays = np.concatenate([vscmg.to_array() for vscmg in self.vscmg_states])
+            else:
+                raise ValueError("Invalid format. Use 'new' or 'old'.")
+
             state_array = np.concatenate((state_array, vscmg_arrays))
-            
+
         return state_array
+
     
     @classmethod
-    def from_array(cls, array):
+    def from_array(cls, array, format="new"):
         """
-        Create a SpacecraftState instance from a flat array.
-        
+        Create a SpacecraftState instance from a structured 1D array.
+
         Args:
-            array (ndarray): Flattened state representation
+            array (ndarray): Flattened state representation.
+            format (str): Format of the input array. 
+                        - "new" (default): [mrp, omega, gimbal_angles, gimbal_rates, wheel_speeds]
+                        - "old": [mrp, omega, [gimbal_angle1, gimbal_rate1, wheel_speed1], ...]
 
         Returns:
-            SpacecraftState: Instance created from the array
+            SpacecraftState: Instance created from the array.
         """
         # Extract attitude and angular velocity
         sigma_BN = array[0:3]
         B_omega_BN = array[3:6]
-        
-        # Create spacecraft state without VSCMGs initially (empty list ensures that no history is carried
-        # over from a previous object)
-        # sc_state = cls(sigma_BN=sigma_BN, B_omega_BN=B_omega_BN, vscmg_states=[])
-        
-        # Calculate number of VSCMGs based on array length
-        n_vscmgs = (len(array) - 6) // 3  # Each VSCMG has 3 state variables
 
-        vscmg_states = []
+        # Extract the remaining data
+        remaining_data = array[6:]
 
-        # Add each VSCMG
-        for i in range(n_vscmgs):
-            idx = 6 + i*3  # Starting index for this VSCMG in the array
-            vscmg_array = array[idx:idx+3]
-            # print(f"vscmg_array: {vscmg_array}")
-            # Create VSCMG state
-            vscmg = VscmgState.from_array(
-                vscmg_array
-            )
+        if format == "new":
+            # Extract number of VSCMGs based on length of gimbal_angles
+            n_vscmgs = (len(remaining_data) // 3)
+            
+            # Split data into separate lists
+            gimbal_angles = remaining_data[:n_vscmgs]
+            gimbal_rates = remaining_data[n_vscmgs: 2 * n_vscmgs]
+            wheel_speeds = remaining_data[2 * n_vscmgs: 3 * n_vscmgs]
 
-            vscmg_states.append(vscmg)
-            # # Add to spacecraft
-            # sc_state.add_vscmg_state(vscmg)
+            vscmg_states = [
+                VscmgState(gimbal_angle=gimbal_angles[i], gimbal_rate=gimbal_rates[i], wheel_speed=wheel_speeds[i])
+                for i in range(n_vscmgs)
+            ]
+        elif format == "old":
+            # Old format: Assume each VSCMG has 3 consecutive values
+            n_vscmgs = len(remaining_data) // 3
+            vscmg_states = [
+                VscmgState.from_array(remaining_data[i * 3: (i + 1) * 3])
+                for i in range(n_vscmgs)
+            ]
+        else:
+            raise ValueError("Invalid format. Use 'new' or 'old'.")
 
-        sc_state = cls(sigma_BN=sigma_BN, B_omega_BN=B_omega_BN, vscmg_states=vscmg_states)
-        return sc_state
+        return cls(sigma_BN=sigma_BN, B_omega_BN=B_omega_BN, vscmg_states=vscmg_states)

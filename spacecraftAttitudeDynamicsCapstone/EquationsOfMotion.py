@@ -160,7 +160,7 @@ class VscmgDynamics:
                                     state_array:np.array, 
                                     external_torque=np.array([0,0,0]),) -> np.array:
         """
-        Compute the time derivatives for the spacecraft state in the absence of external torques, wheel motor torque, 
+        Compute the time derivatives for the spacecraft state in the absence of control torques, wheel motor torque, 
         and gimbal motor torque
         
         NOTE: None of the subfunctions in here should utilize self.spacecraft.state because that is not updated

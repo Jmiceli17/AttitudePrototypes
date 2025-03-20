@@ -751,7 +751,10 @@ class TorqueFreeSpacecraftDynamics(BaseSpacecraftDynamics):
         state = self.spacecraft.state
         t = t_init
 
-        external_torque = torque_eq(t=t, 
+        if torque_eq is None:
+            external_torque = np.array([0,0,0])
+        else:
+            external_torque = torque_eq(t=t, 
                                 spacecraft=self.spacecraft)
 
         init_energy = self.CalculateTotalEnergy(spacecraft=self.spacecraft)
@@ -823,8 +826,11 @@ class TorqueFreeSpacecraftDynamics(BaseSpacecraftDynamics):
             t = t + t_step
 
             # Update torque for the next step
-            external_torque = torque_eq(t=t, 
-                                        spacecraft=self.spacecraft)
+            if torque_eq is None:
+                external_torque = np.array([0,0,0])
+            else:
+                external_torque = torque_eq(t=t, 
+                                            spacecraft=self.spacecraft)
 
             current_total_energy = self.CalculateTotalEnergy(spacecraft=self.spacecraft)
 

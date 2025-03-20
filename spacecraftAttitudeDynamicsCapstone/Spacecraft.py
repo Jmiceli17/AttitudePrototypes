@@ -126,7 +126,7 @@ class Spacecraft:
                  B_Is: np.array, 
                  init_state: SpacecraftState, 
                  actuators: list[WheelBase],
-                 control_gains: ControlGains):
+                 control_gains: ControlGains=None):
         self.B_Is = B_Is
         self.state = init_state
         self.actuators = actuators

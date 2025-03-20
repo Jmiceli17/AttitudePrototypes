@@ -184,7 +184,6 @@ if __name__ == "__main__":
             gimbal_angle_dict.update({vidx: solution[f"gimbal_angle_{vidx}"]})
             gimbal_rate_dict.update({vidx: solution[f"gimbal_rate_{vidx}"]})
 
-
     t_list = solution["time"]
     energy_list = solution["total_energy"]
     power_list = solution["total_power"]

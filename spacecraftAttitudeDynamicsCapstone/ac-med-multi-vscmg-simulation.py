@@ -4,7 +4,7 @@ import math
 from State import SpacecraftState, VscmgState
 from Spacecraft import Spacecraft,Vscmg
 from ModifiedRodriguesParameters import MRP
-from EquationsOfMotion import VscmgDynamics # RungeKutta
+from EquationsOfMotion import TorqueFreeSpacecraftDynamics
 
 import Plots
 
@@ -129,17 +129,17 @@ if __name__ == "__main__":
 
     init_state_sc = SpacecraftState(sigma_BN=sigma_BN_init,
                             B_omega_BN=B_omega_BN_init,
-                            vscmg_states=vscmg_init_states
+                            actuator_states=vscmg_init_states
                             )
 
     sim_spacecraft = Spacecraft(B_Is=B_Is,
                             init_state=init_state_sc,
-                            vscmgs=sim_vscmgs)
+                            actuators=sim_vscmgs)
     
 
 
     # Define equations of motion
-    vscmg_eom = VscmgDynamics(spacecraft=sim_spacecraft)
+    vscmg_eom = TorqueFreeSpacecraftDynamics(spacecraft=sim_spacecraft)
 
     # Define integrator and integration properties
     dt = 0.1 # [s]
@@ -178,10 +178,11 @@ if __name__ == "__main__":
     wheel_speed_dict = {}
     gimbal_angle_dict = {}
     gimbal_rate_dict = {}
-    for vidx in range(len(sim_spacecraft.vscmgs)):
+    for vidx, actuator in enumerate(sim_spacecraft.actuators):
         wheel_speed_dict.update({vidx: solution[f"wheel_speed_{vidx}"]})
-        gimbal_angle_dict.update({vidx: solution[f"gimbal_angle_{vidx}"]})
-        gimbal_rate_dict.update({vidx: solution[f"gimbal_rate_{vidx}"]})
+        if isinstance(actuator, Vscmg):
+            gimbal_angle_dict.update({vidx: solution[f"gimbal_angle_{vidx}"]})
+            gimbal_rate_dict.update({vidx: solution[f"gimbal_rate_{vidx}"]})
 
 
     t_list = solution["time"]
@@ -199,9 +200,10 @@ if __name__ == "__main__":
         power = power_list[idx]
         H_total = H_list[idx]
 
-        wheel_speeds = [wheel_speed_dict[vidx][idx] for vidx in range(len(sim_spacecraft.vscmgs))]
-        gimbal_angles = [gimbal_angle_dict[vidx][idx] for vidx in range(len(sim_spacecraft.vscmgs))]
-        gimbal_rates = [gimbal_rate_dict[vidx][idx] for vidx in range(len(sim_spacecraft.vscmgs))]
+        wheel_speeds = [wheel_speed_dict[vidx][idx] for vidx in range(len(sim_spacecraft.actuators))]
+        if isinstance(actuator, Vscmg):
+            gimbal_angles = [gimbal_angle_dict[vidx][idx] for vidx in range(len(sim_spacecraft.actuators))]
+            gimbal_rates = [gimbal_rate_dict[vidx][idx] for vidx in range(len(sim_spacecraft.actuators))]
 
         if (abs(t-10.0) < 1e-6) or (abs(t-30.0) < 1e-6) or (abs(t-40.0) < 1e-6):
             print(f"> Time: {t}")
@@ -211,7 +213,8 @@ if __name__ == "__main__":
             print(f"  > sigma_BN: {sigma_BN}")
             print(f"  > B_omega_BN: {B_omega_BN}")
             print(f"  > Omegas: {wheel_speeds}")
-            print(f"  > gammas: {gimbal_angles}")
+            if isinstance(actuator, Vscmg):
+                print(f"  > gammas: {gimbal_angles}")
             
     
     Plots.PlotMrpAndOmegaComponents(sigma_BN_list, 

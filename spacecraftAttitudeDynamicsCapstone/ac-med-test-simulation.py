@@ -50,7 +50,6 @@ def ReferenceAngularVelocity(t:float, dt:float=0.0001) -> np.array:
     N_omega_RN = np.array([w1, w2, w3])
     
     return N_omega_RN
-    # return np.array([0,0,0])
 
 def ReferenceAngularAcceleration(t:float, dt:float=0.0001) -> np.array:
     '''Function for approximating N_omega_RN_dot'''

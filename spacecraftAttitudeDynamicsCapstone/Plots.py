@@ -29,14 +29,14 @@ def PlotMrpAndOmegaComponents(mrps, omegas, t, title=None):
     axs[0].plot(t, mrps[:, 1], 'g', label='$\sigma_2$')
     axs[0].plot(t, mrps[:, 2], 'r', label='$\sigma_3$')
     axs[0].legend(loc='best')
-    axs[0].set(ylabel='$\sigma_{B/N}$')
+    axs[0].set(ylabel='$\sigma$')
     axs[0].grid()
 
     axs[1].plot(t, omegas[:, 0], 'b', label='$\omega_1$')
     axs[1].plot(t, omegas[:, 1], 'g', label='$\omega_2$')
     axs[1].plot(t, omegas[:, 2], 'r', label='$\omega_3$')
     axs[1].legend(loc='best')
-    axs[1].set(xlabel='t [s]', ylabel='$\omega_{B/N}$ [rad/s]')
+    axs[1].set(xlabel='t [s]', ylabel='$\omega$ [rad/s]')
     axs[1].grid()
     plt.show()
 

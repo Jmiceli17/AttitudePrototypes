@@ -1,4 +1,3 @@
-
 import matplotlib.pyplot as plt
 import numpy as np
 from PointingControl import Mode
@@ -119,4 +118,95 @@ def PlotTorqueComponents(u, t, title=None):
     axs.set(xlabel='t [s]', ylabel='Torque $u$ [Nm]')
     axs.grid()
 
+    plt.show()
+
+
+def PlotWheelSpeeds(wheel_speeds, time_list, title=''):
+    """
+    Plot wheel speeds for all VSCMGs over time
+    
+    Args:
+        wheel_speeds: Dictionary with VSCMG index as key and list of wheel speeds as value
+        time_list: List of time points
+        title: Plot title (optional)
+    """
+    plt.figure(figsize=(10, 6))
+    
+    for idx, speeds in wheel_speeds.items():
+        plt.plot(time_list, speeds, label=f'VSCMG {idx+1}')
+    
+    plt.xlabel('Time [s]')
+    plt.ylabel('Wheel Speed [rad/s]')
+    plt.grid(True)
+    plt.legend()
+    if title:
+        plt.title(title)
+    plt.tight_layout()
+    plt.show()
+
+def PlotGimbalAngles(gimbal_angles, time_list, title=''):
+    """
+    Plot gimbal angles for all VSCMGs over time
+    
+    Args:
+        gimbal_angles: Dictionary with VSCMG index as key and list of gimbal angles as value
+        time_list: List of time points
+        title: Plot title (optional)
+    """
+    plt.figure(figsize=(10, 6))
+    
+    for idx, angles in gimbal_angles.items():
+        # Convert angles to degrees for better readability
+        angles_deg = np.array(angles) * 180 / np.pi
+        plt.plot(time_list, angles_deg, label=f'VSCMG {idx+1}')
+    
+    plt.xlabel('Time [s]')
+    plt.ylabel('Gimbal Angle [deg]')
+    plt.grid(True)
+    plt.legend()
+    if title:
+        plt.title(title)
+    plt.tight_layout()
+    plt.show()
+
+def PlotGimbalTorques(gimbal_torque_dict: dict, t_list: list, title: str = None):
+    """
+    Plot gimbal torques for all VSCMGs
+    
+    Args:
+        gimbal_torque_dict (dict): Dictionary containing gimbal torques for each VSCMG
+        t_list (list): List of time points
+        title (str, optional): Plot title. Defaults to None.
+    """
+    plt.figure()
+    for idx, torques in gimbal_torque_dict.items():
+        plt.plot(t_list, torques, label=f'VSCMG {idx+1}')
+    
+    plt.xlabel('Time [s]')
+    plt.ylabel('Gimbal Torque [Nm]')
+    if title:
+        plt.title(title)
+    plt.grid(True)
+    plt.legend()
+    plt.show()
+
+def PlotWheelTorques(wheel_torque_dict: dict, t_list: list, title: str = None):
+    """
+    Plot wheel torques for all VSCMGs
+    
+    Args:
+        wheel_torque_dict (dict): Dictionary containing wheel torques for each VSCMG
+        t_list (list): List of time points
+        title (str, optional): Plot title. Defaults to None.
+    """
+    plt.figure()
+    for idx, torques in wheel_torque_dict.items():
+        plt.plot(t_list, torques, label=f'VSCMG {idx+1}')
+    
+    plt.xlabel('Time [s]')
+    plt.ylabel('Wheel Torque [Nm]')
+    if title:
+        plt.title(title)
+    plt.grid(True)
+    plt.legend()
     plt.show()

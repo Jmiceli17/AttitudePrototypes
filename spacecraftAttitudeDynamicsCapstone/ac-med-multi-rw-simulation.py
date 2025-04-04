@@ -137,12 +137,6 @@ def ControlFunction(t, spacecraft:Spacecraft):
 
         h_s[i] = actuator.I_Ws * (ws + actuator.state.wheel_speed)
 
-    # print(f"h_s: {h_s}")
-    # print(f"1st term: {np.matmul(-K, sigma_BR.as_array())}")
-    # print(f"2nd term: {np.matmul(-P, B_omega_BR)}")
-    # print(f"3rd term: {np.matmul(inertia, (B_omega_RN_dot - np.matmul(B_omega_BN_tilde, B_omega_RN)))}")
-    # print(f"4th term: {np.matmul(B_omega_BN_tilde, (np.matmul(inertia, B_omega_BN) + np.matmul(Gs, h_s)))}")
-    # print(f"5th term: {np.matmul(Gs, h_s)}")
     # Calculate control torque vector in body frame
     term1 = np.matmul(-K, sigma_BR.as_array())
     term2 = np.matmul(-P, B_omega_BR)

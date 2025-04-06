@@ -25,7 +25,7 @@ class VscmgState(ActuatorState):
             gimbal_rate (float, optional): Rate of change of the gimbal angle [rad/s]
                                           Defaults to 0.0.
         """
-
+        self.initial_wheel_speed = wheel_speed
         self.wheel_speed = wheel_speed
         self.gimbal_angle = gimbal_angle
         self.gimbal_rate = gimbal_rate

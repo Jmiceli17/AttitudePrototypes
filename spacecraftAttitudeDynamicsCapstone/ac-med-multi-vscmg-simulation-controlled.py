@@ -2,12 +2,132 @@ import numpy as np
 import math
 
 from State import SpacecraftState, VscmgState
-from Spacecraft import Spacecraft,Vscmg
+from Spacecraft import Spacecraft, Vscmg, ControlGains
 from ModifiedRodriguesParameters import MRP
 from EquationsOfMotion import ControlledSpacecraftDynamics
+import RigidBodyKinematics as RBK
+from AttitudeError import CalculateAttitudeError
 from PointingControl import Mode
 
 import Plots
+
+
+def ReferenceAttitude(t:float, f:float = 0.03) -> np.array:
+    """
+    Calcualte reference attitude [RN] given as a function of time
+    """
+    sigma_RN = MRP(0.25 * 0.1 * np.sin(f * t), 
+                   0.25 * 0.2 * np.cos(f * t), 
+                   0.25 * -0.3 * np.sin(2.0 * f * t))
+    dcm_R_N = RBK.MRP2C(sigma_RN.as_array())
+
+    return dcm_R_N
+
+def ReferenceAngularVelocity(t:float, dt:float=0.0001) -> np.array:
+    """
+    Approximate [NRc_dot] numerically by applying a small time step and evaluating the change in [NRc]
+    """
+
+    dcm_R_N_0 = ReferenceAttitude(t - dt)
+    dcm_R_N_1 = ReferenceAttitude(t)
+
+    dcm_N_R_0 = np.transpose(dcm_R_N_0)
+    dcm_N_R_1 = np.transpose(dcm_R_N_1)
+    
+    dcm_N_R_dt = dcm_N_R_1 - dcm_N_R_0
+
+    dcm_N_R_dot = 1/dt * dcm_N_R_dt
+    
+    # Kinematic differential equation [C_dot] = -[omega_tilde][C] --> omega_tilde = -[C_dot] * [C]^T
+    N_omega_NR_tilde = np.matmul(-dcm_N_R_dot, np.transpose(dcm_N_R_1))
+
+    # We have the angular velocity of N wrt Rc but we need angular velocity of Rc wrt N
+    N_omega_RN_tilde = np.transpose(N_omega_NR_tilde)
+
+    # Extract angular velocity from the tilde matrix
+    w1 = -N_omega_RN_tilde[1,2]
+    w2 = N_omega_RN_tilde[0,2]
+    w3 = -N_omega_RN_tilde[0,1]
+    N_omega_RN = np.array([w1, w2, w3])
+    
+    return N_omega_RN
+
+def ReferenceAngularAcceleration(t:float, dt:float=0.0001) -> np.array:
+    """
+    Function for approximating N_omega_RN_dot
+    """
+
+    N_omega_RN_0 = ReferenceAngularVelocity(t-dt)
+    N_omega_RN_1 = ReferenceAngularVelocity(t)
+
+    N_omega_RN_dot = 1/dt*(N_omega_RN_1 - N_omega_RN_0)
+
+    return N_omega_RN_dot
+
+def ControlFunction(t, spacecraft:Spacecraft):
+    """
+    Attitude reference given as a function of time and angular velocity reference is estimated numerically
+    
+    This function implements a slightly more complicated control law that uses the gyroscopic terms of the reference
+    angular velocity
+    """
+    pointing_mode = Mode.INVALID
+
+    sigma_BN : np.array = spacecraft.state.sigma_BN.as_array()
+    B_omega_BN : np.array = spacecraft.state.B_omega_BN
+    # inertia = spacecraft.total_inertia
+
+    K = spacecraft.control_gains.proportional
+    P = spacecraft.control_gains.derivative
+
+    # Calculate reference values to be tracked
+    dcm_R_N = ReferenceAttitude(t)
+    N_omega_RN = ReferenceAngularVelocity(t)
+    N_omega_RN_dot = ReferenceAngularAcceleration(t)
+
+    # Use the current attitude to determine the attitude and ang vel tracking error
+    sigma_BR, B_omega_BR = CalculateAttitudeError(sigma_BN, B_omega_BN, dcm_R_N, N_omega_RN)
+
+    # Convert ang vel and acceleration reference to body frame
+    dcm_B_N = RBK.MRP2C(sigma_BN)
+    B_omega_RN = np.matmul(dcm_B_N, N_omega_RN)
+    B_omega_RN_dot = np.matmul(dcm_B_N, N_omega_RN_dot)
+
+    # Calculate tilde matrix of omega_BN
+    B_omega_BN_tilde = RBK.v3Tilde(B_omega_BN)
+
+    inertia = spacecraft.total_inertia
+
+    # Calculate control torque vector in body frame
+    term1 = np.matmul(-K, sigma_BR.as_array())
+    term2 = np.matmul(-P, B_omega_BR)
+    term3 = np.matmul(inertia, (B_omega_RN_dot - np.matmul(B_omega_BN_tilde, B_omega_RN)))
+    term4 = np.matmul(B_omega_BN_tilde, (np.matmul(inertia, B_omega_BN)))
+    term5 = 0.0
+
+    # Add inertia from each actuator and calculate wheel momentum
+    for actuator, actuator_state in zip(spacecraft.actuators, spacecraft.state.actuator_states):
+        if not isinstance(actuator, Vscmg):
+            raise ValueError("Only VSCMGs are supported for this control law")
+
+        wheel_speed = actuator_state.wheel_speed
+
+        I_Ws = actuator.I_Ws
+
+        dcm_BG = actuator._compute_gimbal_frame(actuator_state)
+        B_ghat_s = dcm_BG[:,0]
+        B_ghat_t = dcm_BG[:,1]
+        B_ghat_g = dcm_BG[:,2]
+
+        ws, wt, wg = actuator._compute_angular_velocity_gimbal_frame_projection(B_omega_BN=B_omega_BN, dcm_BG=dcm_BG)
+
+        term5 += I_Ws * wheel_speed * (wg * B_ghat_t - wt * B_ghat_g)
+
+
+    u = term1 + term2 + term3 + term4 + term5
+
+    return u, pointing_mode, sigma_BR, B_omega_BR
+
 
 if __name__ == "__main__":
 
@@ -133,47 +253,26 @@ if __name__ == "__main__":
                             actuator_states=vscmg_init_states
                             )
 
+    # Define control gains
+    K = np.diag([5., 5., 5.])  # Proportional gain
+    P = np.diag([15., 15., 15.])  # Derivative gain
+    control_gains = ControlGains(proportional=K, derivative=P)
+
     sim_spacecraft = Spacecraft(B_Is=B_Is,
                             init_state=init_state_sc,
                             actuators=sim_vscmgs,
-                            dummy_control=True)
-    
+                            control_gains=control_gains)
 
 
     # Define integrator and integration properties
-    dt = 0.1 # [s]
+    dt = 0.01 # [s]
     t_init = 0 # [s]
-    t_final = 30 # [s]
+    t_final = 150 # [s]
 
     # Define zero external torque function
     def zero_external_torque(t:float, spacecraft:Spacecraft) -> np.array:
         return np.array([0.0, 0.0, 0.0])
 
-
-    '''
-    # adjust the return matrix values as needed
-def result():
-    sigma_BN = [0.19137684, 0.1725584, 0.24855703]
-    Omega =  [14.552268203885799, 14.894959903534076, 13.948114370391275, 13.943273996928202] # rad/sec
-    gamma = [0.1620456217445577, 0.47979177605844, 1.1435227059008424, -1.9996056318044377] # rad
-    return sigma_BN, Omega, gamma
-
-result()
-    '''
-
-
-    def ControlFunction(t, spacecraft:Spacecraft):
-        """
-        Dummy control function
-        In this scenario, the required torque is not calculated (we aren't doing any attitude/rate tracking)
-        instead, the desired VSCMG states are time-based so the VSCMG motor and gimbal torques are calculated 
-        internally
-        """
-        pointing_mode = Mode.INVALID
-        sigma_BR = MRP(0,0,0)
-        B_omega_BR = np.array([0.0, 0.0, 0.0, 0.0])
-        u = np.array([0.0, 0.0, 0.0, 0.0])
-        return u, pointing_mode, sigma_BR, B_omega_BR
 
     # Define equations of motion
     eom = ControlledSpacecraftDynamics(spacecraft=sim_spacecraft,
@@ -224,7 +323,7 @@ result()
             gimbal_angles = [gimbal_angle_dict[vidx][idx] for vidx in range(len(sim_spacecraft.actuators))]
             gimbal_rates = [gimbal_rate_dict[vidx][idx] for vidx in range(len(sim_spacecraft.actuators))]
 
-        if (abs(t-0.0) < 1e-6) or (abs(t-10.0) < 1e-6) or (abs(t-30.0) < 1e-6) or (abs(t-40.0) < 1e-6):
+        if (abs(t-0.0) < 1e-6) or (abs(t-10.0) < 1e-6) or (abs(t-30.0) < 1e-6) or (abs(t-150.0) < 1e-6):
             print(f"> Time: {t}")
             print(f"  > energy: {energy}")
             print(f"  > power: {power}")

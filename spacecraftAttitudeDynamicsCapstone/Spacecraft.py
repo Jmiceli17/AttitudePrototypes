@@ -141,16 +141,34 @@ class Spacecraft:
         self.B_Is = B_Is
         self.state = init_state
         self.actuators = actuators
+        self.num_actuators = len(actuators)
         self.control_gains = control_gains
         self.total_inertia = self.B_Is  # TODO: should this be initialized with actuator inertias?
 
+        # TODO: move these to VSCMGs?
+        self.previous_wheel_speed_dot_desired_vec = np.zeros((self.num_actuators,))
+        self.previous_gimbal_rate_desired_vec = np.zeros((self.num_actuators,))
+        self.wheel_speed_dot_desired_vec = np.zeros((self.num_actuators,))
+        self.gimbal_rate_desired_vec = np.zeros((self.num_actuators,))
+
+        # The 3xN block matrices used to simplify the VSCMG constraint condition
+        self.D0 = np.zeros((3,self.num_actuators))
+        self.D1 = np.zeros((3,self.num_actuators))
+        self.D2 = np.zeros((3,self.num_actuators))
+        self.D3 = np.zeros((3,self.num_actuators))
+        self.D4 = np.zeros((3,self.num_actuators))
+        self.D = np.zeros((3,self.num_actuators))
+        # self.B = np.zeros((3,self.num_actuators))
+        # The 3x2N matrix used to simplfiy the VSCMG accel based steering law constraint condition
+        self.Q = np.zeros((3, 2 * self.num_actuators))
+
         # Dummy control flag to allow us to directly command VSCMG motor and gimbal torques (TODO: remove this after implementation of att feedback)
-        self.dummy_control = dummy_control
-        if self.dummy_control:
-            self.previous_wheel_speed_dot_desired_vec = np.zeros((4,))
-            self.previous_gimbal_rate_desired_vec = np.zeros((4,))
-            self.wheel_speed_dot_desired_vec = np.zeros((4,))
-            self.gimbal_rate_desired_vec = np.zeros((4,))
+        # self.dummy_control = dummy_control
+        # if self.dummy_control:
+        #     self.previous_wheel_speed_dot_desired_vec = np.zeros((4,))
+        #     self.previous_gimbal_rate_desired_vec = np.zeros((4,))
+        #     self.wheel_speed_dot_desired_vec = np.zeros((4,))
+        #     self.gimbal_rate_desired_vec = np.zeros((4,))
 
 
     def update_state(self, state: SpacecraftState) -> None:
@@ -197,14 +215,15 @@ class Spacecraft:
         self.total_inertia = B_I
 
 
-    def update_control_torque(self, B_L_R: np.array, t:float, dt:float = 0.01) -> None:
+    def update_control_torque(self, B_L_R: np.array, dt:float = 0.01) -> None:
         """
         Maps a desired control torque vector to wheel torque commands using minimum norm pseudoinverse solution.
         Solves the equation [Gs]us = -Lr where:
         - [Gs] is the matrix mapping wheel torques to body torques
         - us is the vector of wheel torque commands
         - Lr is the desired control torque vector
-
+        TODO: When using this with VSCMGs the flow is:
+        call set_desired_vscmg_states then call update_control_torque, in that case, we shouldn't need to pass B_L_R to this function
         Args:
             t (float): Time (only used for dummy control) ((TODO: REMOVE)) [s]
             B_L_R (np.array): 3x1 Desired control torque in body frame [Nm]
@@ -233,72 +252,133 @@ class Spacecraft:
                 wheel.wheel_torque = torque
 
         elif actuator_type == Vscmg:
-            # TODO: Implement VSCMG control allocation
-            # This should handle both wheel torques and gimbal torques
-            # The implementation will need to:
-            # 1. Construct appropriate Jacobian matrix
-            # 2. Solve for both wheel and gimbal torques
-            # 3. Update both wheel_torque and gimbal_torque for each VSCMG
+            for i, actuator_state_tuple in enumerate(zip(self.actuators, self.state.actuator_states)):
+                vscmg, vscmg_state = actuator_state_tuple
 
-            if self.dummy_control: 
-                # Doesn't matter what the control torque was, 
-                # use the following scheme to update the gimbal and motor torques
-                
-                for i, actuator_state_tuple in enumerate(zip(self.actuators, self.state.actuator_states)):
-                    vscmg, vscmg_state = actuator_state_tuple
+                # Extract state info for the spacecraft
+                B_omega_BN = self.state.B_omega_BN
 
-                    # Extract state info for the spacecraft
-                    B_omega_BN = self.state.B_omega_BN
+                # Extract properties and state info for this VSCMG
+                I_Ws = vscmg.I_Ws
+                Js = vscmg.G_J[0,0]
+                Jt = vscmg.G_J[1,1]
+                Jg = vscmg.G_J[2,2]
+                gimbal_rate = vscmg_state.gimbal_rate
+                wheel_speed = vscmg_state.wheel_speed
 
-                    # Extract properties and state info for this VSCMG
-                    I_Ws = vscmg.I_Ws
-                    Js = vscmg.G_J[0,0]
-                    Jt = vscmg.G_J[1,1]
-                    Jg = vscmg.G_J[2,2]
-                    gimbal_rate = vscmg_state.gimbal_rate
-                    wheel_speed = vscmg_state.wheel_speed
+                dcm_BG = vscmg._compute_gimbal_frame(vscmg_state)
 
-                    dcm_BG = vscmg._compute_gimbal_frame(vscmg_state)
+                # Get angular velocity projections
+                ws, wt, wg = vscmg._compute_angular_velocity_gimbal_frame_projection(B_omega_BN, dcm_BG)
 
-                    # Get angular velocity projections
-                    ws, wt, wg = vscmg._compute_angular_velocity_gimbal_frame_projection(B_omega_BN, dcm_BG)
+                # Estimate gimbal accel with simple finite difference
+                gimbal_rate_desired = self.gimbal_rate_desired_vec[i]
+                previous_gimbal_rate_desired = self.previous_gimbal_rate_desired_vec[i]
+                gimbal_rate_dot_desired = (gimbal_rate_desired - previous_gimbal_rate_desired) / dt
+                # print(f"gimbal_rate_dot_desired: {gimbal_rate_dot_desired}")
+                # Gimbal rate tracking error
+                delta_gamma_dot = gimbal_rate - gimbal_rate_desired
+                # print(f"delta_gamma_dot: {delta_gamma_dot}")
 
-                    # Estimate gimbal accel
-                    gimbal_rate_desired = self.gimbal_rate_desired_vec[i]
-                    # print(f"gimbal_rate_desired: {gimbal_rate_desired}")
+                vscmg.gimbal_torque = float(Jg * (gimbal_rate_dot_desired - (vscmg.K_gimbal * delta_gamma_dot)) \
+                                        - ((Js - Jt) * ws * wt) - (I_Ws * wheel_speed * wt))
 
-                    previous_gimbal_rate_desired = self.previous_gimbal_rate_desired_vec[i]
-                    gimbal_rate_dot_desired = (gimbal_rate_desired - previous_gimbal_rate_desired) / dt
-                    # print(f"gimbal_rate_dot_desired: {gimbal_rate_dot_desired}")
-                    # Gimbal rate tracking error
-                    delta_gamma = gimbal_rate - gimbal_rate_desired
-                    # print(f"update_control_torque    delta_gamma: {delta_gamma}")
-
-                    vscmg.gimbal_torque = float(Jg * (gimbal_rate_dot_desired - (vscmg.K_gimbal * delta_gamma)) \
-                                            - ((Js - Jt) * ws * wt) - (I_Ws * wheel_speed * wt))
-                    # print(f"update_control_torque    gimbal_torque: {vscmg.gimbal_torque}")
-                    wheel_speed_dot_desired = self.wheel_speed_dot_desired_vec[i]
-                    vscmg.wheel_torque = I_Ws * (wheel_speed_dot_desired + gimbal_rate * wt)
+                wheel_speed_dot_desired = self.wheel_speed_dot_desired_vec[i]
+                vscmg.wheel_torque = I_Ws * (wheel_speed_dot_desired + gimbal_rate * wt)
 
         else:
             raise TypeError(f"Unsupported actuator type: {actuator_type}")
 
-    def set_desired_vscmg_states(self, t:float, dt:float) -> None:
-        # print(f" > Setting desired VSCMG states...")
-        # print(f"   > Before update")
-        # print(f"     > previous_gimbal_rate_desired_vec: \n{self.previous_gimbal_rate_desired_vec.shape}")
-        self.previous_wheel_speed_dot_desired_vec, \
-        self.previous_gimbal_rate_desired_vec = self.calculate_dummy_vscmg_desired_states(t - dt)
+    def set_desired_vscmg_states(self, B_L_R:np.array, B_omega_BR:np.array) -> None:
+        """
+        Update the VSCMG desired states using the latest commanded torque vector
+        See eq 8.232 in Schaub, Junkins
 
-        self.wheel_speed_dot_desired_vec, \
-        self.gimbal_rate_desired_vec = self.calculate_dummy_vscmg_desired_states(t)
-        # print(f"   > After update")
-        # print(f"     > previous_gimbal_rate_desired_vec: \n{self.previous_gimbal_rate_desired_vec.shape}")
+        """
+        # Update the block matrices used to simplify the stability constraint
+        self.update_stability_constraint_matrices(B_omega_BR=B_omega_BR)
+        Q = self.Q
 
-        if (t==0.0) or (abs(t-dt) < 1e-6):
-            print(f"Desired VSCMG states at t={t}:")
-            print(f"  gamma_dot_d: {self.gimbal_rate_desired_vec}")
-            print(f"  Omega_dot_d: {self.wheel_speed_dot_desired_vec}")
+        # Update the previous values
+        import copy 
+        self.previous_wheel_speed_dot_desired_vec = copy.deepcopy(self.wheel_speed_dot_desired_vec)
+        self.previous_gimbal_rate_desired_vec = copy.deepcopy(self.gimbal_rate_desired_vec)
+
+        W = self.get_vscmg_weight_matrix()
+
+        # Solve weighted inverse equation 
+        # NOTE: L_R is negative here because it is the torque acting on the VSCMG (the negative of which
+        # will be applied to the spacecraft)
+        inverse_mat = np.linalg.inv(np.matmul(Q, np.matmul(W, Q.T)))
+        eta_dot = np.matmul(np.matmul(W, np.matmul(Q.T, (inverse_mat))), -B_L_R) 
+
+        self.wheel_speed_dot_desired_vec = eta_dot[:self.num_actuators]
+        self.gimbal_rate_desired_vec = eta_dot[self.num_actuators:]
+
+
+    def get_vscmg_weight_matrix(self) -> np.array:
+        """
+        Calculate the diagonal weight matrix for VSCMG acceleration based servo steering law
+        NOTE: This function assumes that the stability constraint matrices have already been 
+        updated using update_stability_constraint_matrices
+
+        Returns:
+            A 2N x 2N numpy array [W] = diag{ws0, ws1, ... wg0, wg1}
+        """
+        mu = 1e-9 # TODO: make configurable?
+        weights = []
+        D1_matrix = self.D1
+        for vscmg, vscmg_state in zip(self.actuators, self.state.actuator_states):
+            Js = vscmg.G_J[0,0]
+            h = vscmg_state.initial_wheel_speed * Js
+
+            delta = np.linalg.det(1 / (h**2) * np.matmul(D1_matrix, D1_matrix.T))
+
+            wheel_speed_weight = 200.0 * np.exp(-mu * delta)
+            weights.append(wheel_speed_weight)
+
+        # Now add (constant) gimbal weights
+        for vscmg in self.actuators:
+            weights.append(1.0)
+
+        weight_matrix = np.diag(weights)
+        return weight_matrix
+
+    def update_stability_constraint_matrices(self, B_omega_BR:np.array) -> None:
+
+        # Calulate the reference angular velocity
+        # delta_omega = omega_BN - omega_RN
+        B_omega_BN = self.state.B_omega_BN
+
+        B_omega_RN = B_omega_BN - B_omega_BR
+
+        for idx, vscmg_state_tuple in enumerate(zip(self.actuators, self.state.actuator_states)):
+            vscmg, vscmg_state = vscmg_state_tuple
+
+            # Extract properties and state info for this VSCMG
+            I_Ws = vscmg.I_Ws
+            Js = vscmg.G_J[0,0]
+            Jt = vscmg.G_J[1,1]
+            Jg = vscmg.G_J[2,2]
+            wheel_speed = vscmg_state.wheel_speed
+            dcm_BG = vscmg._compute_gimbal_frame(vscmg_state)
+            B_ghat_s = dcm_BG[:,0]
+            B_ghat_t = dcm_BG[:,1]
+            B_ghat_g = dcm_BG[:,2]
+            ws, wt, wg = vscmg._compute_angular_velocity_gimbal_frame_projection(B_omega_BN, dcm_BG)
+
+            # Update matrices (see Schaub, Junkins eq 8.217)
+            self.D0[:,idx] = B_ghat_s * I_Ws
+            self.D1[:,idx] = B_ghat_t * (I_Ws * wheel_speed + (Js / 2.0) * ws) + B_ghat_s * (Js / 2.0) * wt
+            self.D2[:,idx] = 0.5 * Jt * (B_ghat_s * wt + B_ghat_t * ws)
+            self.D3[:,idx] = Jg * (B_ghat_s * wt - B_ghat_t * ws)
+            self.D4[:,idx] = 0.5 * (Js - Jt) * (np.matmul(np.outer(B_ghat_s, B_ghat_t), B_omega_RN) + np.matmul(np.outer(B_ghat_t, B_ghat_s), B_omega_RN))
+
+            # print(f"D1: \n{self.D1}")
+
+            self.D = self.D1 - self.D2 + self.D3 + self.D4
+
+            self.Q = np.concatenate((self.D0, self.D),axis=1)
 
     def calculate_dummy_vscmg_desired_states(self, t:float) -> tuple[np.array, np.array]:
 

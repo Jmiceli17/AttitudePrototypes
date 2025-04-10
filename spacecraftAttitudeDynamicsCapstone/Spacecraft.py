@@ -62,7 +62,7 @@ class Vscmg(WheelBase):
                  gimbal_angle_init: float = None,
                  wheel_torque: float = 0.0,
                  gimbal_torque: float = 0.0,
-                 K_gimbal:float = 2.0):
+                 K_gimbal:float = 1.0):
         super().__init__(G_J, I_Ws, init_state, wheel_torque)
         self.dcm_BG_init = dcm_BG_init
         self.gimbal_angle_init = gimbal_angle_init
@@ -130,8 +130,25 @@ class Spacecraft:
                  init_state: SpacecraftState, 
                  actuators: list[WheelBase],
                  dummy_control: bool=False,
-                 control_gains: ControlGains=None):
+                 control_gains: ControlGains=None,
+                 use_vscmg_null_motion: bool=False,
+                 condition_number_cutoff: float=3.0,
+                 null_motion_gradient_step: float=10.0,
+                 null_motion_correction_gain: float = 0.1):
+        """
+        Spacecraft class
 
+        Arguments:
+
+        
+            use_vscmg_null_motion (bool): When "true", the VSCMG null space will be used to actively re-configure the commanded
+                VSCMG states to maximize the condition number of the VSCMG [D] matrix
+            condition_number_cutoff (float): Deadband to apply to the condition number, must be > 1, if condition number is less 
+                than this, the VSCMG orientation is considered "good enough" and no control effort will be applied
+            null_motion_gradient_step (float): The step size, alpha, to use for gradient ascent of condition number when applying null
+                motion control update
+            null_motion_correction_gain (float): The null motion correction gain, ke
+        """
         # Check that all actuators are of the same type
         if actuators:
             actuator_type = type(actuators[0])
@@ -158,18 +175,24 @@ class Spacecraft:
         self.D3 = np.zeros((3,self.num_actuators))
         self.D4 = np.zeros((3,self.num_actuators))
         self.D = np.zeros((3,self.num_actuators))
-        # self.B = np.zeros((3,self.num_actuators))
+
         # The 3x2N matrix used to simplfiy the VSCMG accel based steering law constraint condition
         self.Q = np.zeros((3, 2 * self.num_actuators))
 
-        # Dummy control flag to allow us to directly command VSCMG motor and gimbal torques (TODO: remove this after implementation of att feedback)
-        # self.dummy_control = dummy_control
-        # if self.dummy_control:
-        #     self.previous_wheel_speed_dot_desired_vec = np.zeros((4,))
-        #     self.previous_gimbal_rate_desired_vec = np.zeros((4,))
-        #     self.wheel_speed_dot_desired_vec = np.zeros((4,))
-        #     self.gimbal_rate_desired_vec = np.zeros((4,))
+        # VSCMG null motion flag
+        self.use_vscmg_null_motion = use_vscmg_null_motion
 
+        if self.use_vscmg_null_motion:
+            # Store the latest SVD results for computing null-space desired states
+            self.D_singular_values = None
+            self.D_condition_number = None
+            self.D_U = None  # Left singular vectors
+            self.D_Vt = None  # Right singular vectors (transposed)
+            if (condition_number_cutoff <= 1.0):
+                raise ValueError("condition_number_cutoff must be greater than 1")
+            self.D_condition_number_cutoff = condition_number_cutoff
+            self.null_motion_gradient_step = null_motion_gradient_step
+            self.null_motion_correction_gain = null_motion_correction_gain
 
     def update_state(self, state: SpacecraftState) -> None:
         """
@@ -275,16 +298,15 @@ class Spacecraft:
                 gimbal_rate_desired = self.gimbal_rate_desired_vec[i]
                 previous_gimbal_rate_desired = self.previous_gimbal_rate_desired_vec[i]
                 gimbal_rate_dot_desired = (gimbal_rate_desired - previous_gimbal_rate_desired) / dt
-                # print(f"gimbal_rate_dot_desired: {gimbal_rate_dot_desired}")
+
                 # Gimbal rate tracking error
                 delta_gamma_dot = gimbal_rate - gimbal_rate_desired
-                # print(f"delta_gamma_dot: {delta_gamma_dot}")
 
                 vscmg.gimbal_torque = float(Jg * (gimbal_rate_dot_desired - (vscmg.K_gimbal * delta_gamma_dot)) \
                                         - ((Js - Jt) * ws * wt) - (I_Ws * wheel_speed * wt))
 
                 wheel_speed_dot_desired = self.wheel_speed_dot_desired_vec[i]
-                vscmg.wheel_torque = I_Ws * (wheel_speed_dot_desired + gimbal_rate * wt)
+                vscmg.wheel_torque = float(I_Ws * (wheel_speed_dot_desired + gimbal_rate * wt))
 
         else:
             raise TypeError(f"Unsupported actuator type: {actuator_type}")
@@ -310,10 +332,93 @@ class Spacecraft:
         # NOTE: L_R is negative here because it is the torque acting on the VSCMG (the negative of which
         # will be applied to the spacecraft)
         inverse_mat = np.linalg.inv(np.matmul(Q, np.matmul(W, Q.T)))
-        eta_dot = np.matmul(np.matmul(W, np.matmul(Q.T, (inverse_mat))), -B_L_R) 
+        eta_dot = np.matmul(np.matmul(W, np.matmul(Q.T, (inverse_mat))), -B_L_R).reshape((2 * self.num_actuators,1))
 
         self.wheel_speed_dot_desired_vec = eta_dot[:self.num_actuators]
         self.gimbal_rate_desired_vec = eta_dot[self.num_actuators:]
+
+        # If using VSCMG null space, we can calculate a new "desired" VSCMG state that maximizes the condition
+        # number of the [D] matrix
+        if self.use_vscmg_null_motion:
+            
+            # # Apply deadband to condition number so that we don't exert a ton of control effort when the 
+            # # conditionality of the [D] matrix is good enough
+            # if (self.D_condition_number <= self.D_condition_number_cutoff):
+            #     gimbal_angle_null_motion_error = np.zeros((self.num_actuators,1))
+
+            # else:
+            # #     # gimbal_angle_null_motion_error = self.compute_delta_gamma()
+            desired_gimbal_angles = np.deg2rad([-45, 45, -45, 45])
+            gimbal_angle_null_motion_error = []
+            for vscmg_state, desired_gimbal_angle in zip(self.state.actuator_states,desired_gimbal_angles):
+                gimbal_angle_null_motion_error.append(vscmg_state.gimbal_angle - desired_gimbal_angle)
+
+            gimbal_angle_null_motion_error = np.array(gimbal_angle_null_motion_error)
+
+            print(f"gimbal_angle_null_motion_error: \n{gimbal_angle_null_motion_error}")
+
+            vscmg_state_error = np.vstack([
+                np.zeros((self.num_actuators, 1)),
+                gimbal_angle_null_motion_error.reshape(-1, 1)
+            ])
+
+            # Define the "[A]" matrix used to specify how much we care about acheiving the null motion states, in this 
+            # case we only care about the gimbal angle states (the bottom diagonal)
+            vscmg_null_motion_encoding = np.block([
+                [np.zeros((self.num_actuators, self.num_actuators)), np.zeros((self.num_actuators, self.num_actuators))],
+                [np.zeros((self.num_actuators, self.num_actuators)), np.eye(self.num_actuators)]
+            ])
+            W = self.get_vscmg_weight_matrix()
+            
+            # eta_null_motion = self.null_motion_correction_gain * np.matmul(np.matmul((np.matmul(np.matmul(W, 
+            #                                 np.matmul(self.Q.T, 
+            #                                     np.linalg.inv(np.matmul(self.Q, np.matmul(W, self.Q.T))))), 
+            #                                         self.Q)) - np.eye(2 * self.num_actuators, 2 * self.num_actuators),
+            #                                             vscmg_null_motion_encoding), 
+            #                                             vscmg_state_error)
+
+            # Debug prints for matrix dimensions and values
+            print("\nDebugging null motion calculation:")
+            
+            # Step 1: Calculate Q*W*Q^T and its inverse
+            QWQt = np.matmul(self.Q, np.matmul(W, self.Q.T))
+            QWQt_inv = np.linalg.inv(QWQt)
+            # print(f"QWQ^T: \n{QWQt}")
+            # print(f"QWQ^T condition number: {np.linalg.cond(QWQt)}")
+            
+            # Step 2: Calculate W*Q^T*(QWQ^T)^-1*Q
+            temp1 = np.matmul(W, np.matmul(self.Q.T, QWQt_inv))
+            temp2 = np.matmul(temp1, self.Q)
+            # print(f"W*Q^T*(QWQ^T)^-1*Q: \n{temp2}")
+            # print(f"Max value in this term: {np.max(np.abs(temp2))}")
+            
+            # Step 3: Subtract identity matrix
+            I_mat = np.eye(2 * self.num_actuators, 2 * self.num_actuators)
+            temp3 = temp2 - I_mat
+            # print(f"After identity subtraction, max abs value: {np.max(np.abs(temp3))}")
+            
+            # Step 4: Multiply by encoding matrix
+            temp4 = np.matmul(temp3, vscmg_null_motion_encoding)
+            # print(f"After encoding multiplication, max abs value: {np.max(np.abs(temp4))}")
+            
+            # Step 5: Final multiplication with state error
+            # print(f"State error: \n{vscmg_state_error}")
+            # print(f"State error max abs value: {np.max(np.abs(vscmg_state_error))}")
+            
+            eta_null_motion = self.null_motion_correction_gain * np.matmul(temp4, vscmg_state_error)
+            # print(f"Final eta_null_motion: \n{eta_null_motion}")
+            # print(f"Final eta_null_motion max abs value: {np.max(np.abs(eta_null_motion))}")
+            # print(f"null_motion_correction_gain: {self.null_motion_correction_gain}")
+
+            # Extract the wheel speed and gimbal portions from the desired state 
+            # NOTE: this implementation means that order matters here
+            wheel_speed_null_desired_null_motion = eta_null_motion[:self.num_actuators]
+            gimbal_rate_desired_null_motion = eta_null_motion[self.num_actuators:]
+            # print(f"gimbal_rate_desired_null_motion: {gimbal_rate_desired_null_motion}")
+
+            self.gimbal_rate_desired_vec += gimbal_rate_desired_null_motion
+            self.wheel_speed_dot_desired_vec += wheel_speed_null_desired_null_motion
+
 
 
     def get_vscmg_weight_matrix(self) -> np.array:
@@ -374,11 +479,20 @@ class Spacecraft:
             self.D3[:,idx] = Jg * (B_ghat_s * wt - B_ghat_t * ws)
             self.D4[:,idx] = 0.5 * (Js - Jt) * (np.matmul(np.outer(B_ghat_s, B_ghat_t), B_omega_RN) + np.matmul(np.outer(B_ghat_t, B_ghat_s), B_omega_RN))
 
-            # print(f"D1: \n{self.D1}")
-
             self.D = self.D1 - self.D2 + self.D3 + self.D4
 
             self.Q = np.concatenate((self.D0, self.D),axis=1)
+
+            # Calculate and store SVD and condition number of the D matrix
+            U, S, Vt = np.linalg.svd(self.D1)
+            self.D_U = U
+            self.D_singular_values = S
+            self.D_Vt = Vt
+            if (S[-1] <= 1e-8):
+                self.D_condition_number = np.inf
+            else:
+                self.D_condition_number = S[0] / S[-1]
+            print(f"condition number: {self.D_condition_number}")
 
     def calculate_dummy_vscmg_desired_states(self, t:float) -> tuple[np.array, np.array]:
 
@@ -393,6 +507,79 @@ class Spacecraft:
                                                 -np.cos((0.03 * t))])) # [rad/s]
 
         return wheel_speed_dot_desired_vec, gimbal_rate_desired_vec
+
+
+    def compute_delta_gamma(self) -> np.array:
+        """
+        
+        """
+        
+        alpha = self.null_motion_gradient_step
+        kappa = self.D_condition_number
+
+        # Chi_i vectors (one for each component of gamma)
+        # If D is 3x3, then vec(D) has length 9, and u_j has length 3
+        # This is just an example; replace with your actual Chi_i vectors
+        num_gamma_components = self.num_actuators
+        if (num_gamma_components != 4):
+            raise ValueError(f"Spacecraft has {num_gamma_components} configured, Current null motion control assumes 4 VSCMGs")
+
+        # Step 1: Extract current SVD of D to get u_j, sigma_j, and V
+        U = self.D_U
+        V = self.D_Vt.T  # Transpose Vt to get V
+
+        # Extract sigma_1 and sigma_3 (first and third singular values)
+        sigma_1 = self.D_singular_values[0]
+        sigma_3 = self.D_singular_values[-1]
+
+        # Extract u_1 and u_3 (first and third left singular vectors)
+        u_1 = U[:, 0]
+        u_3 = U[:, 2]
+
+        # Step 2: Compute partial derivatives of sigma_1 and sigma_3 w.r.t. gamma_i
+        # We'll store these as arrays for each component of gamma
+        partial_sigma1_gamma = np.zeros(num_gamma_components)
+        partial_sigma3_gamma = np.zeros(num_gamma_components)
+
+        for i in range(num_gamma_components):
+
+            # Compute the Chi[i] vector
+            B_omega_BN = self.state.B_omega_BN
+            vscmg = self.actuators[i]
+            vscmg_state = self.state.actuator_states[i]
+            I_Ws = vscmg.I_Ws
+            Js = vscmg.G_J[0,0]
+
+            wheel_speed = vscmg_state.wheel_speed
+
+            dcm_BG = vscmg._compute_gimbal_frame(vscmg_state)
+            B_ghat_s = dcm_BG[:,0]
+            B_ghat_t = dcm_BG[:,1]
+
+            ws, wt, wg = vscmg._compute_angular_velocity_gimbal_frame_projection(B_omega_BN, dcm_BG)
+
+            Chi_i = -B_ghat_s * (I_Ws * wheel_speed + Js * ws) + B_ghat_t * Js * wt
+
+            # Compute partial sigma_1 / partial gamma_i
+            # partial sigma_j / partial gamma_i = (u_j^T Chi_i) V_ij
+            partial_sigma1_gamma[i] = np.dot(u_1.T, Chi_i) * V[i, 0]  # j=1 (sigma_1)
+            
+            # Compute partial sigma_3 / partial gamma_i
+            partial_sigma3_gamma[i] = np.dot(u_3.T, Chi_i) * V[i, 2]  # j=3 (sigma_3)
+
+        # Step 3: Compute partial kappa / partial gamma_i
+        partial_kappa_gamma = np.zeros(num_gamma_components)
+        for i in range(num_gamma_components):
+            term1 = (1 / sigma_3) * partial_sigma1_gamma[i]
+            term2 = (sigma_1 / (sigma_3 ** 2)) * partial_sigma3_gamma[i]
+            partial_kappa_gamma[i] = term1 - term2
+
+        # Step 4: Compute Delta gamma
+        # Delta gamma_i = -alpha (1 - kappa(t)) (partial kappa / partial gamma_i)
+        delta_gamma = -alpha * (1 - kappa) * partial_kappa_gamma
+
+        return delta_gamma
+
 
     # def CalculateTotalEnergy(self) -> float:
     #     """

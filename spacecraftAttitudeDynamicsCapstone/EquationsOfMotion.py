@@ -242,12 +242,6 @@ class BaseSpacecraftDynamics(ABC):
                 )
                 wheel_speed_dot.append(wheel_speed_dot_val)
 
-            # print(f"sigma_BN_dot: {sigma_BN_dot}")
-            # print(f"B_omega_BN_dot: {B_omega_BN_dot}")
-            # print(f"gimbal_angle_dot: {gimbal_angle_dot}")
-            # print(f"gimbal_rate_dot: {gimbal_rate_dot}")
-            # print(f"wheel_speed_dot: {wheel_speed_dot}")
-
             state_diff = np.concatenate([
                 sigma_BN_dot,
                 B_omega_BN_dot,
@@ -274,13 +268,6 @@ class BaseSpacecraftDynamics(ABC):
         # Calculate state_dot using M matrix
         Mmat = self._compute_M_matrix(B_I, state)
         state_dot = np.linalg.solve(Mmat, state_diff)
-        if t==0.0:
-            print(f"State dot at t=0:")
-            print(f"  > sigma_BN_deriv: {state_dot[:3]}")
-            print(f"  > omega_BN_B_deriv: {state_dot[3:6]}")
-            print(f"  > gamma_vec_deriv: {state_dot[6:10]}")
-            print(f"  > gamma_dot_vec_deriv: {state_dot[10:14]}")
-            print(f"  > Omega_vec_deriv: {state_dot[14:]}")
 
         return state_dot
 
@@ -311,11 +298,10 @@ class BaseSpacecraftDynamics(ABC):
                                 B_omega_BN:np.array,) -> float:
         """
         Compute the RHS of the derivative of wheel speed based on ex 4.15 from H. Schaub, J. Junkins
-        TODO: Move to BaseSpacecraftDynamics class
         Args:
-            vscmg (Vscmg): The VSCMG
-            vscmg_state (VscmgState): The state of the vscmg with which to calculate wheel speed dot 
-                (not necessarily the current state of the vscmg)
+            actuator (WheelBase): The actuator
+            actuator_state (ActuatorState): The state of the actuator with which to calculate wheel speed dot 
+                (not necessarily the current state of the actuator)
             B_omega_BN (ndarray): Angular velocity of body wrt inertial frame expressed in body 
                 frame components [rad/s]
 
@@ -363,7 +349,6 @@ class BaseSpacecraftDynamics(ABC):
 
         # Extract properties from this VSCMG
         gimbal_torque = vscmg.gimbal_torque
-        # print(f"_compute_gimbal_rate_dot    gimbal_torque: {gimbal_torque}")
 
         # Extract state info 
         wheel_speed = vscmg_state.wheel_speed
@@ -438,7 +423,15 @@ class BaseSpacecraftDynamics(ABC):
 
     def _compute_M_matrix(self, B_I: np.array, state:SpacecraftState) -> np.array:
         """
-        Compute the system matrix for the equations of motion
+        Compute the system matrix [M] for the equations of motion where [M]x_dot = f(x)
+        See Schaub, Junkins Ex. 4.15 
+
+        Args:
+            B_I (ndarray): Total inertia of the spacecraft (expressed in body frame component) [Kgm^2]
+            state (SpacecraftState): The state of the spacecraft
+
+        Returns:
+            The system matrix for the equations of motion
         """
         num_actuators = len(self.spacecraft.actuators)
         first_actuator = self.spacecraft.actuators[0]
@@ -524,6 +517,7 @@ class BaseSpacecraftDynamics(ABC):
 class TorqueFreeSpacecraftDynamics(BaseSpacecraftDynamics):
     """
     Spacecraft dynamics with no control inputs on the actuators
+    :TODO This class can probably be eliminated eventually, if not using control just set the control functions to 0s
     """
     def __init__(self, 
                  spacecraft:Spacecraft):
@@ -532,7 +526,6 @@ class TorqueFreeSpacecraftDynamics(BaseSpacecraftDynamics):
         
         Args:
             spacecraft (Spacecraft): The spacecraft object that is being modeled
-
         """
         self.spacecraft = spacecraft
 
@@ -688,7 +681,7 @@ class ControlledSpacecraftDynamics(BaseSpacecraftDynamics):
         Args:
             spacecraft (Spacecraft): The spacecraft object that is being modeled
             control_law (callable): Function to calculate control torque being applied to the spacecraft, must be of 
-                form f(t, spacecraft)
+                form f(t, spacecraft) # TODO: make this part of the spacecraft class
         """
         self.spacecraft = spacecraft
         self.control_law = control_law
@@ -775,15 +768,6 @@ class ControlledSpacecraftDynamics(BaseSpacecraftDynamics):
                 print(f"Updating control torque on step {step_counter}...")
                 B_L_R, pointing_mode, sigma_BR, B_omega_BR = self.control_law(t, self.spacecraft)
 
-            # print(f"Updating servo desired states...")
-            # # Set desired VSCMG states based on the current control torque
-            # self.spacecraft.set_desired_vscmg_states(B_L_R=B_L_R, B_omega_BR=B_omega_BR)
-
-            # # Update the VSCMG torque components with the current desired states 
-            # # This doesn't need to happen every time step but it should be more frequent than the update of
-            # # the control torque B_L_R
-            # self.spacecraft.update_control_torque(B_L_R=B_L_R, dt=t_step)
-
             if (step_counter % actuator_servo_update_steps == 0):
                 print(f"Updating servo desired states on step {step_counter}...")
                 # Set desired VSCMG states based on the current control torque
@@ -803,14 +787,6 @@ class ControlledSpacecraftDynamics(BaseSpacecraftDynamics):
             k2 = t_step*self.compute_state_derivatives(t + t_step/2, state + k1/2, external_torque)
             k3 = t_step*self.compute_state_derivatives(t + t_step/2, state + k2/2, external_torque)
             k4 = t_step*self.compute_state_derivatives(t + t_step, state + k3, external_torque)
-
-            # DEBUGGING: print the intermediate derivatives on the first step
-            # if t == 0.0:
-            #     print(f"state at [t={t}]: \n{state}")
-            #     print(f"k1 array: {k1}\n as state: {SpacecraftState.from_array(k1, spacecraft=self.spacecraft)}")
-            #     print(f"k2 array: {k2}\n as state: {SpacecraftState.from_array(k2, spacecraft=self.spacecraft)}")
-            #     print(f"k3 array: {k3}\n as state: {SpacecraftState.from_array(k3, spacecraft=self.spacecraft)}")
-            #     print(f"k4 array: {k4}\n as state: {SpacecraftState.from_array(k4, spacecraft=self.spacecraft)}")
 
             # Update state array for next step
             state = state + 1.0/6.0*(k1 + 2*k2 + 2*k3 + k4)

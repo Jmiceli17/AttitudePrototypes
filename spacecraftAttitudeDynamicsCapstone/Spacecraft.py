@@ -34,13 +34,15 @@ class WheelBase(ABC):
 
     def _compute_angular_velocity_gimbal_frame_projection(self, B_omega_BN: np.array, dcm_BG: np.array) -> tuple[float, float, float]:
         """
-        Compute the gimbal frame angular velocity projection components ws, wt, wg and a desired DCM [BG] (does not have to be the current DCM)
-        
+        Compute the gimbal frame angular velocity projection components ws, wt, wg (i.e the components of angular velocity projected on the gimbal frame
+        basis vectors g_hat_s, g_hat_t, g_hat_g)
+
         Args:
-            B_omega_BN (ndarray): The angular velocity of the body wrt the inertial frame expressed in body frame
-            dcm_BG (ndarray): DCM from gimbal frame to body frame
-        Returns:    
-            tuple: Three floats ws, wt, wg
+            B_omega_BN (ndarray): The angular velocity of the body wrt the inertial frame expressed in body frame components [rad/s]
+            dcm_BG (ndarray): DCM from gimbal frame to body frame (does not have to be the current gimbal frame)
+
+        Returns:
+            Three angular velocity components ws, wt, wg all expressed in [rad/s]
         """
         
         B_ghat_s = dcm_BG[:,0]
@@ -71,6 +73,16 @@ class Vscmg(WheelBase):
         self.K_gimbal = K_gimbal
 
     def _compute_gimbal_frame(self, state: VscmgState) -> np.array:
+        """
+        Compute the current gimbal frame for this actuator
+        For reaction wheels, this frame is fixed and does not change with state
+
+        Args:
+            state (VscmgState): State of the actuator to use for evaluation
+        
+        Returns:
+            3x3 DCM [BG] describing the orienation of the gimbal frame wrt the body frame
+        """
         if not isinstance(state, VscmgState):
             raise TypeError(f"Expected VscmgState, got {type(state)}")
             
@@ -108,7 +120,14 @@ class ReactionWheel(WheelBase):
 
     def _compute_gimbal_frame(self, state: ReactionWheelState) -> np.array:
         """
-        For reaction wheels, we ignore the state parameter since the frame is fixed
+        Compute the current gimbal frame for this actuator
+        For reaction wheels, this frame is fixed and does not change with state
+
+        Args:
+            state (ReactionWheelState): State of the actuator to use for evaluation
+        
+        Returns:
+            3x3 DCM [BG] describing the orienation of the gimbal frame wrt the body frame
         """
         # First column is the spin axis
         s = self.spin_axis
@@ -138,9 +157,13 @@ class Spacecraft:
         """
         Spacecraft class
 
-        Arguments:
-
-        
+        Args:
+            B_Is (ndarray): The inertia of the spacecraft hub (not including actuators) expressed in body frame [kgm^2]
+            init_state (SpacecraftState): The initial state of the spacecraft
+            actuators (list): List of all actuators attached to the spacececraft (currently assumes all actuators are of the same type)
+            dummy_control (bool): Flag indicating if dummy actuator control should be used, when true actuator desired staets will be 
+                calculated as a function of time rather than derived from requested control torque, currently only works with VSCMG actuators
+            control_gains (ControlGains): The control gains to use when determining the required torque for attitude feedback control
             use_vscmg_null_motion (bool): When "true", the VSCMG null space will be used to actively re-configure the commanded
                 VSCMG states to maximize the condition number of the VSCMG [D] matrix
             condition_number_cutoff (float): Deadband to apply to the condition number, must be > 1, if condition number is less 
@@ -248,7 +271,6 @@ class Spacecraft:
         TODO: When using this with VSCMGs the flow is:
         call set_desired_vscmg_states then call update_control_torque, in that case, we shouldn't need to pass B_L_R to this function
         Args:
-            t (float): Time (only used for dummy control) ((TODO: REMOVE)) [s]
             B_L_R (np.array): 3x1 Desired control torque in body frame [Nm]
         """
         # Get actuator type (we already ensure all actuators are the same type in __init__)
@@ -383,38 +405,25 @@ class Spacecraft:
             # Step 1: Calculate Q*W*Q^T and its inverse
             QWQt = np.matmul(self.Q, np.matmul(W, self.Q.T))
             QWQt_inv = np.linalg.inv(QWQt)
-            # print(f"QWQ^T: \n{QWQt}")
-            # print(f"QWQ^T condition number: {np.linalg.cond(QWQt)}")
             
             # Step 2: Calculate W*Q^T*(QWQ^T)^-1*Q
             temp1 = np.matmul(W, np.matmul(self.Q.T, QWQt_inv))
             temp2 = np.matmul(temp1, self.Q)
-            # print(f"W*Q^T*(QWQ^T)^-1*Q: \n{temp2}")
-            # print(f"Max value in this term: {np.max(np.abs(temp2))}")
             
             # Step 3: Subtract identity matrix
             I_mat = np.eye(2 * self.num_actuators, 2 * self.num_actuators)
             temp3 = temp2 - I_mat
-            # print(f"After identity subtraction, max abs value: {np.max(np.abs(temp3))}")
             
             # Step 4: Multiply by encoding matrix
             temp4 = np.matmul(temp3, vscmg_null_motion_encoding)
-            # print(f"After encoding multiplication, max abs value: {np.max(np.abs(temp4))}")
             
             # Step 5: Final multiplication with state error
-            # print(f"State error: \n{vscmg_state_error}")
-            # print(f"State error max abs value: {np.max(np.abs(vscmg_state_error))}")
-            
             eta_null_motion = self.null_motion_correction_gain * np.matmul(temp4, vscmg_state_error)
-            # print(f"Final eta_null_motion: \n{eta_null_motion}")
-            # print(f"Final eta_null_motion max abs value: {np.max(np.abs(eta_null_motion))}")
-            # print(f"null_motion_correction_gain: {self.null_motion_correction_gain}")
 
             # Extract the wheel speed and gimbal portions from the desired state 
             # NOTE: this implementation means that order matters here
             wheel_speed_null_desired_null_motion = eta_null_motion[:self.num_actuators]
             gimbal_rate_desired_null_motion = eta_null_motion[self.num_actuators:]
-            # print(f"gimbal_rate_desired_null_motion: {gimbal_rate_desired_null_motion}")
 
             self.gimbal_rate_desired_vec += gimbal_rate_desired_null_motion
             self.wheel_speed_dot_desired_vec += wheel_speed_null_desired_null_motion
@@ -450,9 +459,16 @@ class Spacecraft:
         return weight_matrix
 
     def update_stability_constraint_matrices(self, B_omega_BR:np.array) -> None:
+        """
+        Update stability constraint matrices [D0], [D1], [D2], [D3], [D4], [D], [Q] and
+        compute the SVD of [D1] for null motion control, these matrices are necessary to compute the desired
+        states for the VSCMG servo
 
-        # Calulate the reference angular velocity
-        # delta_omega = omega_BN - omega_RN
+        Args:
+            B_omega_BR (ndarray): Angular velocity of the spacecraft body wrt the reference angular velocity (ang vel error)
+                expressed in body frame components [rad/s]
+        """
+        # Calulate the reference angular velocity from delta_omega = omega_BN - omega_RN
         B_omega_BN = self.state.B_omega_BN
 
         B_omega_RN = B_omega_BN - B_omega_BR
@@ -492,10 +508,15 @@ class Spacecraft:
                 self.D_condition_number = np.inf
             else:
                 self.D_condition_number = S[0] / S[-1]
-            print(f"condition number: {self.D_condition_number}")
 
     def calculate_dummy_vscmg_desired_states(self, t:float) -> tuple[np.array, np.array]:
+        """
+        Function for generating desired VSCMG actuutor states as a function of time,
+        NOTE: This function is not currently used but can be used for testing
 
+        Args:
+            t (float): Simulation time [s]
+        """
         wheel_speed_dot_desired_vec = np.deg2rad(np.array([np.sin((0.02 * t)),
                                                 np.cos((0.02 * t)),
                                                 -np.cos((0.03 * t)),
@@ -511,7 +532,10 @@ class Spacecraft:
 
     def compute_delta_gamma(self) -> np.array:
         """
-        
+        Compute the gimbal angle tracking error that would minimize the condition number of VSCMG configruation
+
+        Returns:
+            Nx1 numpy array containing the gimbal angle tracking error for each VSCMG
         """
         
         alpha = self.null_motion_gradient_step
@@ -578,50 +602,4 @@ class Spacecraft:
         # Delta gamma_i = -alpha (1 - kappa(t)) (partial kappa / partial gamma_i)
         delta_gamma = -alpha * (1 - kappa) * partial_kappa_gamma
 
-        return delta_gamma
-
-
-    # def CalculateTotalEnergy(self) -> float:
-    #     """
-    #     Calculate the total rotational kinetic energy of the system (see eq. 4.144 in Schaub, Junkins)
-
-    #     Args:
-    #         state (SpacecraftState): Current state of the entire system
-    #     """
-        
-    #     B_omega_BN = self.state.B_omega_BN
-
-
-    #     # Energy of spacecraft
-    #     T_sc = 0.5 * np.dot(B_omega_BN, np.matmul(self.B_Is, B_omega_BN))
-
-    #     # Total energy will be the kinetic energy of the spacecraft plus all the VSCMGs
-    #     T_total = T_sc
-
-    #     for vscmg in self.vscmgs:
-
-    #         # Extract inertia variables
-    #         Js = vscmg.G_J[0,0]
-    #         Jt = vscmg.G_J[1,1]
-    #         Jg = vscmg.G_J[2,2]
-    #         I_Ws = vscmg.I_Ws
-    #         I_Gs = Js - I_Ws
-
-    #         gimbal_angle = vscmg.state.gimbal_angle
-    #         wheel_speed = vscmg.state.wheel_speed
-    #         gimbal_rate = vscmg.state.gimbal_rate
-
-    #         dcm_BG = vscmg._compute_gimbal_frame(vscmg_state=vscmg.state)
-    #         ws, wt, wg = self._compute_angular_velocity_gimbal_frame_projection(B_omega_BN=B_omega_BN,
-    #                                                                             dcm_BG=dcm_BG)
-
-    #         # Energy of gimbal
-    #         T_gimbal = 0.5 * ((I_Gs * ws**2) + (Jt * wt**2) + (Jg * (wg + gimbal_rate)**2 ))
-
-    #         # Energy of wheel
-    #         T_wheel = 0.5 * (I_Ws * (wheel_speed + ws)**2)
-
-    #         # Add to total
-    #         T_total += T_gimbal + T_wheel
-
-    #     return T_total 
+        return delta_gamma  

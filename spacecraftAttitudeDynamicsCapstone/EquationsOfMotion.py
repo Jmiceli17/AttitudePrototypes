@@ -714,7 +714,6 @@ class ControlledSpacecraftDynamics(BaseSpacecraftDynamics):
         control_update_period = 10 * t_step # [sec]# TODO: add to args
         actuator_servo_update_steps = int(actuator_servo_update_period / t_step)
         attitude_feedback_update_steps = int(control_update_period / t_step)
-        
 
         # Compute required control torque in body frame
         B_L_R, pointing_mode, sigma_BR, B_omega_BR = self.control_law(t, self.spacecraft)
@@ -724,8 +723,7 @@ class ControlledSpacecraftDynamics(BaseSpacecraftDynamics):
                                 spacecraft=self.spacecraft)
 
         # Calculate desired VSCMG states directly and set the commaned torque for the actuators
-        self.spacecraft.set_desired_vscmg_states(B_L_R=B_L_R, B_omega_BR=B_omega_BR)
-        self.spacecraft.update_control_torque(B_L_R=B_L_R, dt=t_step)
+        self.spacecraft.update_control_torque(B_L_R=B_L_R, B_omega_BR=B_omega_BR, dt=t_step)
 
         init_energy = self.CalculateTotalEnergy(spacecraft=self.spacecraft)
         init_H = self.CalculateTotalInertialAngularMomentum(spacecraft=self.spacecraft)
@@ -759,24 +757,18 @@ class ControlledSpacecraftDynamics(BaseSpacecraftDynamics):
                 solution_dict[f"gimbal_torque_{idx}"] = [actuator.gimbal_torque]
                 solution_dict[f"wheel_torque_{idx}"] = [actuator.wheel_torque]
 
-
         # Integrate equations of motion
         while t < t_max:
 
             # Update the outer loop and calculate the overall torque that needs to be applied to the spacecraft
             if (step_counter % attitude_feedback_update_steps == 0):
-                print(f"Updating control torque on step {step_counter}...")
                 B_L_R, pointing_mode, sigma_BR, B_omega_BR = self.control_law(t, self.spacecraft)
 
             if (step_counter % actuator_servo_update_steps == 0):
-                print(f"Updating servo desired states on step {step_counter}...")
-                # Set desired VSCMG states based on the current control torque
-                self.spacecraft.set_desired_vscmg_states(B_L_R=B_L_R, B_omega_BR=B_omega_BR)
-
                 # Update the VSCMG torque components with the current desired states 
                 # This doesn't need to happen every time step but it should be more frequent than the update of
                 # the control torque B_L_R
-                self.spacecraft.update_control_torque(B_L_R=B_L_R, dt=t_step)
+                self.spacecraft.update_control_torque(B_L_R=B_L_R, B_omega_BR=B_omega_BR, dt=t_step)
 
             # Make sure the input state is an array
             if isinstance(state, SpacecraftState):

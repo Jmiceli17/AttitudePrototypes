@@ -261,17 +261,25 @@ class Spacecraft:
         self.total_inertia = B_I
 
 
-    def update_control_torque(self, B_L_R: np.array, dt:float = 0.01) -> None:
+    def update_control_torque(self, B_L_R:np.array, B_omega_BR:np.array=None, dt:float=0.01) -> None:
         """
-        Maps a desired control torque vector to wheel torque commands using minimum norm pseudoinverse solution.
+        Maps a desired control torque vector to actuator torque commands
+         
+        When using reaction wheels, this mapping is performed using minimum norm pseudoinverse solution
         Solves the equation [Gs]us = -Lr where:
         - [Gs] is the matrix mapping wheel torques to body torques
         - us is the vector of wheel torque commands
         - Lr is the desired control torque vector
-        TODO: When using this with VSCMGs the flow is:
-        call set_desired_vscmg_states then call update_control_torque, in that case, we shouldn't need to pass B_L_R to this function
+
+        When using VSCMGs the mapping is done by first determining the desired VSCMG states (optionally including
+        VSCMG null motion) and then calculating the wheel and gimbal torques required to achieve those states
+
         Args:
-            B_L_R (np.array): 3x1 Desired control torque in body frame [Nm]
+            B_L_R (ndarray): 3x1 Desired control torque in body frame [Nm]
+            B_omega_BR (ndarray): 3x1 vector descrbing ang vel of body wrt. desired reference frame, expressed 
+                in body frame components [rad/s]
+            dt (float): The size of the time step between dynamics updates [s] 
+                NOTE: This may not be the same as the amount of time that elapses between calls to this function
         """
         # Get actuator type (we already ensure all actuators are the same type in __init__)
         if not self.actuators:
@@ -297,6 +305,10 @@ class Spacecraft:
                 wheel.wheel_torque = torque
 
         elif actuator_type == Vscmg:
+
+            # Update the desired states for the VSCMG
+            self.set_desired_vscmg_states(B_L_R=B_L_R, B_omega_BR=B_omega_BR)
+
             for i, actuator_state_tuple in enumerate(zip(self.actuators, self.state.actuator_states)):
                 vscmg, vscmg_state = actuator_state_tuple
 
@@ -338,6 +350,10 @@ class Spacecraft:
         Update the VSCMG desired states using the latest commanded torque vector
         See eq 8.232 in Schaub, Junkins
 
+        Args: 
+            B_L_R (ndarray): Desired control torque expressed in body frame [Nm]
+            B_omega_BR (ndarary): Angular velocity of the spacecraft body wrt the reference angular velocity (ang vel error)
+                expressed in body frame components [rad/s]
         """
         # Update the block matrices used to simplify the stability constraint
         self.update_stability_constraint_matrices(B_omega_BR=B_omega_BR)
@@ -370,14 +386,12 @@ class Spacecraft:
 
             # else:
             # #     # gimbal_angle_null_motion_error = self.compute_delta_gamma()
-            desired_gimbal_angles = np.deg2rad([-45, 45, -45, 45])
+            desired_gimbal_angles = np.deg2rad([-45, 45, -45, 45])  # TODO: Make hardsetting desired gimbal angles an option
             gimbal_angle_null_motion_error = []
             for vscmg_state, desired_gimbal_angle in zip(self.state.actuator_states,desired_gimbal_angles):
                 gimbal_angle_null_motion_error.append(vscmg_state.gimbal_angle - desired_gimbal_angle)
 
             gimbal_angle_null_motion_error = np.array(gimbal_angle_null_motion_error)
-
-            print(f"gimbal_angle_null_motion_error: \n{gimbal_angle_null_motion_error}")
 
             vscmg_state_error = np.vstack([
                 np.zeros((self.num_actuators, 1)),
@@ -398,9 +412,6 @@ class Spacecraft:
             #                                         self.Q)) - np.eye(2 * self.num_actuators, 2 * self.num_actuators),
             #                                             vscmg_null_motion_encoding), 
             #                                             vscmg_state_error)
-
-            # Debug prints for matrix dimensions and values
-            print("\nDebugging null motion calculation:")
             
             # Step 1: Calculate Q*W*Q^T and its inverse
             QWQt = np.matmul(self.Q, np.matmul(W, self.Q.T))

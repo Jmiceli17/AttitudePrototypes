@@ -12,7 +12,7 @@ Navigate to this directory\
 `cd spacecraftAttitudeDynamicsCaptsone`
 
 Create and initialize a conda enviornment using the provided `environment.yml` This will create a conda environment and install the python dependencies needed to run this code.\
-`conda create -f environment.yml`
+`conda env create -f environment.yml`
 
 #### NOTE
 If running in WSL2, you will have to install and start [XLaunch/VcXsrv](https://sourceforge.net/projects/vcxsrv/) (or some other X-server) in order for the plots to display.

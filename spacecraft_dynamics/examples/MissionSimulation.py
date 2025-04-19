@@ -1,7 +1,12 @@
 """
 Script to execute the full mission scenario in which all pointing modes are demonstrated
 and transitions between them are automatic. The results of the simulation are 
-plotted. 
+plotted.
+
+This simulation encompases all the code for the capstone project of 
+ASEN 5010 - Spacecraft Attitude Dynamics and Control at CU Boulder
+
+The supporting documentation can be found under spacecraft_dynamics/docs
 """
 import numpy as np
 

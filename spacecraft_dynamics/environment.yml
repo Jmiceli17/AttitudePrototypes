@@ -1,4 +1,4 @@
-name: adcs-capstone
+name: sc-dyn
 channels:
   - defaults
 dependencies:

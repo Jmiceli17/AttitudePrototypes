@@ -1,29 +1,70 @@
-# Spacecraft Attitude Dynamics and Control Capstone Project
-Code for the capstone project of ASEN 5010 - Spacecraft Attitude Dynamics and Control at
-CU Boulder. The project focused on developing attitude guidance and control algorithms for a small 
-spacecraft orbiting Mars. A detailed description of the project and the mathematical 
-background for each algorithm is provided in [Documentation](https://github.com/Jmiceli17/AttitudePrototypes/tree/main/spacecraftAttitudeDynamicsCapstone/Documentation).
+# Spacecraft Dynamics
+A Python package developed from various assignments and projects completed for courses in the Aerospace Engineering Department at CU Boulder.
 
-# Set Up
-Clone this repository\
-`git clone https://github.com/Jmiceli17/AttitudePrototypes.git`
+## Features
+- Modeling of satellite attitude dynamics
+- Support for various kinds of actuators
+    - Reaction wheels
+    - Variable-Speed Control Moment Gyroscopes (VSCMGs)
+    - None (control authority is assumed)
+- Support for different control algorithms
+- Support for different guidance algorithms
 
-Navigate to this directory\
-`cd spacecraftAttitudeDynamicsCaptsone`
 
-Create and initialize a conda enviornment using the provided `environment.yml` This will create a conda environment and install the python dependencies needed to run this code.\
-`conda env create -f environment.yml`
+## Coming Soon
+- Guidance algorithms as the primary interface to the satellite (this is how most 
+3rd party software uses an ADCS!)
+- Orbit propagation
+    - Some of the example scenarios fake this by converting propagating spherical coordinates over 
+    time and converting them to cartesian (no equations of motion are actually modeled though)
 
+## Installation
+This package is not on PyPI but you can install it directly from the repository:
+
+```bash
+# Clone the repository
+git clone https://github.com/Jmiceli17/AttitudePrototypes.git
+cd AttitudePrototypes/spacecraft_dynamics
+
+# Option 1: Install directly
+pip install .
+
+# Option 2: Install in development mode (if you want to modify the code)
+pip install -e .
+```
+
+
+## Quick Start
+
+
+## Documentation
+
+
+## Examples
+See the `examples/` directory for usage examples:
+- Attitude control simulations
+- Actuator configurations
+- Orbital scenarios
+```bash
+# Example usage
+cd AttitudePrototypes/spacecraft_dynamics/examples
+python MissionSimulation.py
+```
 #### NOTE
 If running in WSL2, you will have to install and start [XLaunch/VcXsrv](https://sourceforge.net/projects/vcxsrv/) (or some other X-server) in order for the plots to display.
 
-# Usage
-Activate the conda environment\
-`conda activate adcs-capstone`
 
-The main mission simulation is defined in `MissionSimulation.py` Running this file runs the entire simulation and
-produces plots of the results.\
-`python MissionSimulation.py`
+## Development
+For development, clone the repository and create a conda environment:
 
-Other simulations can be found in `PointingSimulations.py`\
-`python PointingSimulations.py`
+```bash
+git clone https://github.com/Jmiceli17/AttitudePrototypes.git
+cd AttitudePrototypes/spacecraft_dynamics
+conda env create -f environment.yml
+conda activate sc-dyn
+pip install -e .
+```
+
+
+## License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

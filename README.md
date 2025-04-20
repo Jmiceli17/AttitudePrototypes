@@ -1,2 +1,2 @@
-# Prototypes
+# AttitudePrototypes
 Repository for trying things out
